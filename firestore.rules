@@ -1,0 +1,163 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // 1. Global Safety Net (Default Deny)
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // 2. Hardened Primitive Helpers
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerifiedUser() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isValidEquippedSkins(skins) {
+      return skins is map
+        && skins.keys().hasOnly(['archer', 'flame', 'frost', 'tesla'])
+        && (!('archer' in skins) || (skins.archer is string && skins.archer.size() <= 64))
+        && (!('flame' in skins) || (skins.flame is string && skins.flame.size() <= 64))
+        && (!('frost' in skins) || (skins.frost is string && skins.frost.size() <= 64))
+        && (!('tesla' in skins) || (skins.tesla is string && skins.tesla.size() <= 64));
+    }
+
+    function isValidUserProfile(data, userId) {
+      return data.keys().hasAll([
+          'uid', 'displayName', 'crystals', 'unlockedSkins',
+          'equippedSkins', 'unlockedSkills', 'bestWave',
+          'totalKills', 'gamesPlayed', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'uid', 'displayName', 'crystals', 'unlockedSkins',
+          'equippedSkins', 'unlockedSkills', 'bestWave',
+          'totalKills', 'gamesPlayed', 'createdAt', 'updatedAt'
+        ])
+        && data.uid is string
+        && data.uid == userId
+        && data.uid == request.auth.uid
+        && data.displayName is string
+        && data.displayName.size() >= 1
+        && data.displayName.size() <= 40
+        && data.crystals is int
+        && data.crystals >= 0
+        && data.crystals <= 10000000
+        && data.unlockedSkins is list
+        && data.unlockedSkins.size() <= 24
+        && (data.unlockedSkins.size() == 0 || (data.unlockedSkins[0] is string && data.unlockedSkins[0].size() <= 64))
+        && isValidEquippedSkins(data.equippedSkins)
+        && data.unlockedSkills is list
+        && data.unlockedSkills.size() <= 10
+        && (data.unlockedSkills.size() == 0 || (data.unlockedSkills[0] is string && data.unlockedSkills[0].size() <= 64))
+        && data.bestWave is int
+        && data.bestWave >= 0
+        && data.bestWave <= 100000
+        && data.totalKills is int
+        && data.totalKills >= 0
+        && data.totalKills <= 100000000
+        && data.gamesPlayed is int
+        && data.gamesPlayed >= 0
+        && data.gamesPlayed <= 1000000
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidLeaderboardEntry(data, userId) {
+      return data.keys().hasAll([
+          'uid', 'displayName', 'bestWave', 'totalKills',
+          'bossesDefeated', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'uid', 'displayName', 'bestWave', 'totalKills',
+          'bossesDefeated', 'createdAt', 'updatedAt'
+        ])
+        && data.uid is string
+        && data.uid == userId
+        && data.uid == request.auth.uid
+        && data.displayName is string
+        && data.displayName.size() >= 1
+        && data.displayName.size() <= 40
+        && data.bestWave is int
+        && data.bestWave >= 0
+        && data.bestWave <= 100000
+        && data.totalKills is int
+        && data.totalKills >= 0
+        && data.totalKills <= 100000000
+        && data.bossesDefeated is int
+        && data.bossesDefeated >= 0
+        && data.bossesDefeated <= 1000000
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    // 3. Private User Profiles (Owner-only PII & Wallet Isolation)
+    match /users/{userId} {
+      allow get: if isSignedIn() && isValidId(userId) && request.auth.uid == userId;
+      allow list: if false;
+
+      allow create: if isVerifiedUser()
+        && isValidId(userId)
+        && request.auth.uid == userId
+        && isValidUserProfile(incoming(), userId)
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+
+      allow update: if isVerifiedUser()
+        && isValidId(userId)
+        && request.auth.uid == userId
+        && isValidUserProfile(incoming(), userId)
+        && incoming().uid == existing().uid
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && incoming().bestWave >= existing().bestWave
+        && incoming().diff(existing()).affectedKeys().hasOnly([
+          'displayName', 'crystals', 'unlockedSkins', 'equippedSkins',
+          'unlockedSkills', 'bestWave', 'totalKills', 'gamesPlayed', 'updatedAt'
+        ]);
+
+      allow delete: if false;
+    }
+
+    // 4. Public Real-Time Wave Leaderboard (No PII; monotonic bestWave protection)
+    match /leaderboard/{userId} {
+      allow get: if isValidId(userId);
+      allow list: if resource.data.bestWave >= 0;
+
+      allow create: if isVerifiedUser()
+        && isValidId(userId)
+        && request.auth.uid == userId
+        && isValidLeaderboardEntry(incoming(), userId)
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+
+      allow update: if isVerifiedUser()
+        && isValidId(userId)
+        && request.auth.uid == userId
+        && isValidLeaderboardEntry(incoming(), userId)
+        && incoming().uid == existing().uid
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && incoming().bestWave >= existing().bestWave
+        && incoming().diff(existing()).affectedKeys().hasOnly([
+          'displayName', 'bestWave', 'totalKills', 'bossesDefeated', 'updatedAt'
+        ]);
+
+      allow delete: if false;
+    }
+  }
+}

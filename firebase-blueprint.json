@@ -1,0 +1,140 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "Player progression, crystal wallet, unlocked tower skins, equipped skins, and Castle Lord special skills.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "description": "Firebase Auth UID",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "displayName": {
+          "type": "string",
+          "description": "Commander display name",
+          "minLength": 1,
+          "maxLength": 40
+        },
+        "crystals": {
+          "type": "integer",
+          "description": "Accumulated crystal currency"
+        },
+        "unlockedSkins": {
+          "type": "array",
+          "description": "List of unlocked skin IDs (max 24)"
+        },
+        "equippedSkins": {
+          "type": "object",
+          "description": "Map of TowerType to equipped SkinId"
+        },
+        "unlockedSkills": {
+          "type": "array",
+          "description": "List of unlocked Castle Lord special attack IDs (max 10)"
+        },
+        "bestWave": {
+          "type": "integer",
+          "description": "Highest wave survived"
+        },
+        "totalKills": {
+          "type": "integer",
+          "description": "Cumulative monsters defeated"
+        },
+        "gamesPlayed": {
+          "type": "integer",
+          "description": "Total battle runs completed"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Creation server timestamp"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Last update server timestamp"
+        }
+      },
+      "required": [
+        "uid",
+        "displayName",
+        "crystals",
+        "unlockedSkins",
+        "equippedSkins",
+        "unlockedSkills",
+        "bestWave",
+        "totalKills",
+        "gamesPlayed",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "LeaderboardEntry": {
+      "title": "LeaderboardEntry",
+      "description": "Public global leaderboard record tracking each player's highest survived wave.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "description": "Firebase Auth UID",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "displayName": {
+          "type": "string",
+          "description": "Commander public nickname",
+          "minLength": 1,
+          "maxLength": 40
+        },
+        "bestWave": {
+          "type": "integer",
+          "description": "Highest wave survived"
+        },
+        "totalKills": {
+          "type": "integer",
+          "description": "Best run or cumulative monster kills"
+        },
+        "bossesDefeated": {
+          "type": "integer",
+          "description": "Number of bosses defeated"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Initial record server timestamp"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Last record server timestamp"
+        }
+      },
+      "required": [
+        "uid",
+        "displayName",
+        "bestWave",
+        "totalKills",
+        "bossesDefeated",
+        "createdAt",
+        "updatedAt"
+      ]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": {
+        "$ref": "#/entities/UserProfile"
+      },
+      "description": "Private player progression, crystals, unlocked skins and Castle Lord skills."
+    },
+    "/leaderboard/{userId}": {
+      "schema": {
+        "$ref": "#/entities/LeaderboardEntry"
+      },
+      "description": "Public real-time leaderboard entries ranked by highest survived wave."
+    }
+  }
+}

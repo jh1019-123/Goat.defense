@@ -1,0 +1,6 @@
+{
+  "name": "Bastion Siege 3D",
+  "description": "2인칭 성벽 시점의 3D 격자 타워 디펜스 게임 — 무제한 웨이브, 보스전, 스킨 상점 및 실시간 리더보드",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
