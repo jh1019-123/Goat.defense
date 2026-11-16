@@ -412,6 +412,105 @@ export class VfxLibrary {
     };
   }
 
+  public spawnEnemyDefeat(
+    scene: THREE.Scene,
+    x: number,
+    z: number,
+    accentColor: number,
+    bossTier: 'normal' | 'mini' | 'big' = 'normal',
+  ): ManagedVfx[] {
+    const out: ManagedVfx[] = [];
+    const isBig = bossTier === 'big';
+    const isMini = bossTier === 'mini';
+    const scaleMult = isBig ? 2.2 : isMini ? 1.55 : 1.0;
+    const duration = isBig ? 0.65 : isMini ? 0.52 : 0.4;
+
+    // 1. Ground shockwave ring
+    const ring = new THREE.Mesh(
+      this.impactRingGeo,
+      this.getMat(isBig ? 0xfbbf24 : accentColor, 0.88, true),
+    );
+    ring.position.set(x, 0.09, z);
+    scene.add(ring);
+    out.push({
+      object: ring,
+      age: 0,
+      duration: duration * 0.85,
+      onUpdate: (t) => {
+        const s = 0.35 + t * (1.45 * scaleMult);
+        ring.scale.set(s, 1, s);
+      },
+    });
+
+    // 2. Rising soul-core flash
+    const soulOrb = new THREE.Mesh(this.sparkOrbGeo, this.getMat(0xffffff, 0.88, true));
+    soulOrb.position.set(x, 0.85 * scaleMult, z);
+    scene.add(soulOrb);
+    out.push({
+      object: soulOrb,
+      age: 0,
+      duration: duration * 0.65,
+      onUpdate: (t) => {
+        const pop = t < 0.25 ? 0.6 + (t / 0.25) * 1.1 : Math.max(0.01, (1 - (t - 0.25) / 0.75) * 1.7);
+        soulOrb.scale.setScalar(pop * scaleMult);
+        soulOrb.position.y = (0.85 + t * 1.2) * scaleMult;
+      },
+    });
+
+    // 3. Radial crystal/soul fragments
+    const shardGroup = new THREE.Group();
+    shardGroup.position.set(x, 0.7 * scaleMult, z);
+    const shardCount = isBig ? 12 : isMini ? 8 : 6;
+    const shardMat = this.getMat(accentColor, 0.92, true);
+    const coreMat = this.getMat(0xfef08a, 0.85, true);
+
+    for (let i = 0; i < shardCount; i++) {
+      const m = new THREE.Mesh(this.emberGeo, i % 2 === 0 ? shardMat : coreMat);
+      m.userData.ang = (i / shardCount) * Math.PI * 2 + (i % 3) * 0.2;
+      m.userData.lift = 0.8 + (i % 3) * 0.45;
+      m.userData.dist = (1.1 + (i % 2) * 0.55) * scaleMult;
+      shardGroup.add(m);
+    }
+    scene.add(shardGroup);
+
+    out.push({
+      object: shardGroup,
+      age: 0,
+      duration,
+      onUpdate: (t, dt) => {
+        const s = Math.max(0.01, (1 - t) * (1.15 * scaleMult));
+        for (let i = 0; i < shardGroup.children.length; i++) {
+          const c = shardGroup.children[i];
+          const ang = c.userData.ang as number;
+          const dist = (c.userData.dist as number) * t;
+          const arcY = Math.sin(t * Math.PI) * (c.userData.lift as number) * scaleMult - t * 0.35;
+          c.position.set(Math.cos(ang) * dist, arcY, Math.sin(ang) * dist);
+          c.rotation.x += dt * 7;
+          c.rotation.y += dt * 6;
+          c.scale.setScalar(s);
+        }
+      },
+    });
+
+    // 4. Extra energy dome for Mini-Boss / Big-Boss defeats
+    if (isMini || isBig) {
+      const dome = new THREE.Mesh(this.shockDomeGeo, this.getMat(accentColor, 0.55, true));
+      dome.position.set(x, 0.05, z);
+      scene.add(dome);
+      out.push({
+        object: dome,
+        age: 0,
+        duration: duration * 0.8,
+        onUpdate: (t) => {
+          const s = (0.4 + t * 2.2) * scaleMult;
+          dome.scale.set(s, s * (1 - t * 0.55), s);
+        },
+      });
+    }
+
+    return out;
+  }
+
   public spawnArrowRain(scene: THREE.Scene, centerX: number, centerZ: number): ManagedVfx[] {
     const group = new THREE.Group();
     const mat = this.getMat(0xfbbf24, 0.95, true);

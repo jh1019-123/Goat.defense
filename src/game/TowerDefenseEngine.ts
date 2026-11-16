@@ -197,6 +197,11 @@ export class TowerDefenseEngine {
   private bannerTimer = 0;
 
   private cameraPreset: CameraPreset = CameraPreset.SECOND_PERSON;
+  private introActive = true;
+  private lobbySceneIndex = 0;
+  private lobbySceneElapsed = 0;
+  private lobbyDemoSpawnTimer = 0.8;
+  private lobbyDemoSeq = 0;
   private lastHudPushTime = 0;
 
   private resizeObserver: ResizeObserver;
@@ -239,8 +244,9 @@ export class TowerDefenseEngine {
 
     const aspect = (container.clientWidth || window.innerWidth) / (container.clientHeight || window.innerHeight);
     this.camera = new THREE.PerspectiveCamera(48, aspect, 0.2, 160);
-    // Iconic 2nd-person perspective from behind the castle battlement looking down the monster corridor
-    this.camera.position.set(0, 14.5, 24.8);
+    // Start slightly elevated for the intense smooth intro camera push-in toward the castle
+    this.camera.position.set(0, 23.5, 36.0);
+    _camCurrentLook.set(0, 2.8, -9.0);
     this.camera.lookAt(_camCurrentLook);
 
     const pmremGenerator = new THREE.PMREMGenerator(this.renderer);
@@ -537,13 +543,83 @@ export class TowerDefenseEngine {
         this.spawnTowerOnSlot(slot, p.type, false);
       }
     }
+    this.seedLobbyDemoEnemies();
+  }
+
+  private seedLobbyDemoEnemies(): void {
+    const initialSpots: Array<{ z: number; laneOffset: number; type: EnemyType }> = [
+      { z: -15.5, laneOffset: -1.1, type: EnemyType.SHADOW },
+      { z: -9.5, laneOffset: 1.0, type: EnemyType.GOLEM },
+      { z: -3.5, laneOffset: -0.4, type: EnemyType.MINI_BOSS },
+      { z: 3.0, laneOffset: 1.2, type: EnemyType.ORC },
+    ];
+    for (const spot of initialSpots) {
+      this.spawnLobbyDemoEnemyAt(spot.z, spot.laneOffset, spot.type);
+    }
+    this.lobbyDemoSpawnTimer = 1.6;
+  }
+
+  private spawnLobbyDemoEnemyAt(z: number, laneOffset: number, enemyType: EnemyType): void {
+    const arch = ENEMY_ARCHETYPES[enemyType];
+    const rig = createEnemyRig(enemyType, this.shadowTex);
+    rig.hpBarGroup.visible = false;
+    rig.root.position.set(laneOffset, 0.02, z);
+    this.scene.add(rig.root);
+
+    const demoHp =
+      enemyType === EnemyType.MINI_BOSS
+        ? 480
+        : enemyType === EnemyType.GOLEM
+          ? 280
+          : enemyType === EnemyType.ORC
+            ? 180
+            : 120;
+
+    const enemy: ActiveEnemy = {
+      id: this.nextEnemyId++,
+      type: enemyType,
+      hp: demoHp,
+      maxHp: demoHp,
+      baseSpeed: arch.baseSpeed * 0.88,
+      gateDamage: 0,
+      x: laneOffset,
+      z,
+      burnTimer: 0,
+      burnDps: 0,
+      slowTimer: 0,
+      slowFactor: 0,
+      freezeTimer: 0,
+      armorMelted: false,
+      walkPhase: Math.random() * Math.PI * 2,
+      rig,
+    };
+    this.enemies.push(enemy);
+    this.enemyMap.set(enemy.id, enemy);
   }
 
   // ===========================================================================
   // Public API for React UI
   // ===========================================================================
 
+  public setIntroActive(active: boolean): void {
+    this.introActive = active;
+  }
+
+  public setLobbyScene(index: number, snap = false): void {
+    this.lobbySceneIndex = ((index % 4) + 4) % 4;
+    this.lobbySceneElapsed = 0;
+    if (snap && this.mode === 'lobby_preview') {
+      this.computeLobbySceneCamera(this.lobbySceneIndex, 0, _camTargetPos, _camTargetLook);
+      this.camera.position.copy(_camTargetPos);
+      _camCurrentLook.copy(_camTargetLook);
+      this.camera.lookAt(_camCurrentLook);
+    }
+  }
+
   public startNewBattle(): void {
+    this.introActive = false;
+    this.lobbySceneIndex = 0;
+    this.lobbySceneElapsed = 0;
     this.clearBattleEntities();
     this.mode = 'battle';
     this.phase = 'prep';
@@ -561,12 +637,20 @@ export class TowerDefenseEngine {
       [SkillId.METEOR_STRIKE]: 0,
       [SkillId.ABSOLUTE_ZERO]: 0,
     };
+    // Start elevated so the scene transition reveals a smooth swoop into the 2nd-person battlement
+    this.camera.position.set(0, 25.5, 34.5);
+    _camCurrentLook.set(0, 1.8, -8.5);
+    this.camera.lookAt(_camCurrentLook);
+
     this.showBanner('전투 준비! 격자 위에 타워를 배치한 뒤 웨이브를 시작하세요.', 4.0);
     this.updateRangeIndicator();
     this.pushHudState(true);
   }
 
   public returnToLobby(): void {
+    this.introActive = false;
+    this.lobbySceneIndex = 0;
+    this.lobbySceneElapsed = 0;
     this.clearBattleEntities();
     this.mode = 'lobby_preview';
     this.phase = 'prep';
@@ -882,7 +966,7 @@ export class TowerDefenseEngine {
     }
   }
 
-  private updateTowerCombat(dt: number): void {
+  private updateTowerCombat(dt: number, silent = false): void {
     for (const tower of this.towers.values()) {
       tower.cooldownTimer -= dt;
 
@@ -927,15 +1011,15 @@ export class TowerDefenseEngine {
 
       // Recoil squash kickback
       tower.rig.turret.scale.y = 0.86;
-      this.fireTower(tower, bestTarget);
+      this.fireTower(tower, bestTarget, silent);
     }
   }
 
-  private fireTower(tower: ActiveTower, target: ActiveEnemy): void {
+  private fireTower(tower: ActiveTower, target: ActiveEnemy, silent = false): void {
     const skin = this.getSkinForType(tower.type);
 
     if (tower.type === TowerType.TESLA) {
-      soundEngine.playTeslaZap();
+      if (!silent) soundEngine.playTeslaZap();
       const arcColor = skin ? skin.projectileColor : 0xc084fc;
       const hitIds = new Set<number>();
       let currentOrigin = _vecA.set(
@@ -1047,9 +1131,11 @@ export class TowerDefenseEngine {
       });
     }
 
-    if (tower.type === TowerType.ARCHER) soundEngine.playBowShot();
-    else if (tower.type === TowerType.FLAME) soundEngine.playFlameLaunch();
-    else if (tower.type === TowerType.FROST) soundEngine.playFrostPulse();
+    if (!silent) {
+      if (tower.type === TowerType.ARCHER) soundEngine.playBowShot();
+      else if (tower.type === TowerType.FLAME) soundEngine.playFlameLaunch();
+      else if (tower.type === TowerType.FROST) soundEngine.playFrostPulse();
+    }
   }
 
   private updateProjectiles(dt: number): void {
@@ -1175,7 +1261,7 @@ export class TowerDefenseEngine {
         if (e.type === EnemyType.MINI_BOSS || e.type === EnemyType.BIG_BOSS) {
           this.bossesDefeated += 1;
         }
-        this.spawnImpactRing(e.x, e.z, 1.1, 0xfbbf24);
+        this.spawnEnemyDefeatEffect(e);
         this.scene.remove(e.rig.root);
         this.disposeObject3D(e.rig.root);
         this.enemyMap.delete(e.id);
@@ -1233,6 +1319,58 @@ export class TowerDefenseEngine {
     }
   }
 
+  private updateLobbyDemoEnemies(dt: number): void {
+    for (let i = this.enemies.length - 1; i >= 0; i--) {
+      const e = this.enemies[i];
+
+      if (e.burnTimer > 0) {
+        e.burnTimer -= dt;
+        e.hp -= e.burnDps * dt;
+        e.rig.burnAura.visible = true;
+        e.rig.burnAura.rotation.y += dt * 5;
+      } else {
+        e.rig.burnAura.visible = false;
+      }
+
+      if (e.hp <= 0) {
+        this.spawnEnemyDefeatEffect(e);
+        this.scene.remove(e.rig.root);
+        this.disposeObject3D(e.rig.root);
+        this.enemyMap.delete(e.id);
+        this.enemies.splice(i, 1);
+        continue;
+      }
+
+      let speedMult = 1;
+      if (e.freezeTimer > 0) {
+        e.freezeTimer -= dt;
+        speedMult = 0;
+        e.rig.frostAura.visible = true;
+      } else if (e.slowTimer > 0) {
+        e.slowTimer -= dt;
+        speedMult = Math.max(0.25, 1 - e.slowFactor);
+        e.rig.frostAura.visible = true;
+      } else {
+        e.rig.frostAura.visible = false;
+      }
+
+      const moveDist = e.baseSpeed * speedMult * dt;
+      e.z += moveDist;
+      e.walkPhase += moveDist * 3.4;
+
+      e.rig.root.position.set(e.x, 0.02, e.z);
+      e.rig.bodyGroup.position.y = speedMult > 0 ? Math.abs(Math.sin(e.walkPhase)) * 0.14 : 0;
+      e.rig.bodyGroup.rotation.z = speedMult > 0 ? Math.sin(e.walkPhase) * 0.06 : 0;
+
+      if (e.z >= CASTLE_GATE_Z - 1.5) {
+        this.scene.remove(e.rig.root);
+        this.disposeObject3D(e.rig.root);
+        this.enemyMap.delete(e.id);
+        this.enemies.splice(i, 1);
+      }
+    }
+  }
+
   private updateEffects(dt: number): void {
     for (let i = this.effects.length - 1; i >= 0; i--) {
       const fx = this.effects[i];
@@ -1248,6 +1386,17 @@ export class TowerDefenseEngine {
 
   private spawnImpactRing(x: number, z: number, maxRadius: number, color: number): void {
     this.effects.push(this.vfx.spawnImpactRing(this.scene, x, z, maxRadius, color));
+  }
+
+  private spawnEnemyDefeatEffect(enemy: ActiveEnemy): void {
+    const accent = ENEMY_ARCHETYPES[enemy.type].accentColor;
+    const bossTier =
+      enemy.type === EnemyType.BIG_BOSS
+        ? 'big'
+        : enemy.type === EnemyType.MINI_BOSS
+          ? 'mini'
+          : 'normal';
+    this.effects.push(...this.vfx.spawnEnemyDefeat(this.scene, enemy.x, enemy.z, accent, bossTier));
   }
 
   private spawnArrowRainEffect(centerX: number, centerZ: number): void {
@@ -1333,11 +1482,25 @@ export class TowerDefenseEngine {
         }
       }
     } else {
-      // Gentle turret idle scan in lobby preview
-      const t = this.clock.elapsedTime;
-      for (const tower of this.towers.values()) {
-        tower.rig.turret.rotation.y += Math.sin(t + tower.slot.row) * 0.004;
+      this.lobbySceneElapsed += rawDelta;
+      this.lobbyDemoSpawnTimer -= rawDelta;
+      if (this.lobbyDemoSpawnTimer <= 0 && this.enemies.length < 6) {
+        const cycle = [
+          EnemyType.GOBLIN,
+          EnemyType.ORC,
+          EnemyType.SHADOW,
+          EnemyType.GOLEM,
+          EnemyType.MINI_BOSS,
+        ];
+        const nextType = cycle[this.lobbyDemoSeq % cycle.length];
+        const laneOffset = ((this.lobbyDemoSeq % 5) - 2) * 0.72;
+        this.lobbyDemoSeq += 1;
+        this.spawnLobbyDemoEnemyAt(ROAD_START_Z, laneOffset, nextType);
+        this.lobbyDemoSpawnTimer = 1.9;
       }
+      this.updateTowerCombat(rawDelta, true);
+      this.updateProjectiles(rawDelta);
+      this.updateLobbyDemoEnemies(rawDelta);
     }
 
     this.updateEffects(simDt);
@@ -1376,14 +1539,54 @@ export class TowerDefenseEngine {
     this.frameId = window.setTimeout(poll, 5);
   }
 
+  private computeLobbySceneCamera(
+    sceneIdx: number,
+    elapsed: number,
+    outPos: THREE.Vector3,
+    outLook: THREE.Vector3,
+  ): void {
+    if (sceneIdx === 1) {
+      // Scene 1: Side-flank view tracking monsters marching down the central corridor
+      const pan = Math.sin(elapsed * 0.28) * 3.0;
+      outPos.set(10.6, 3.6, -2.5 + pan);
+      outLook.set(0, 1.3, -2.0 + pan * 0.45);
+    } else if (sceneIdx === 2) {
+      // Scene 2: Low-angle upward hero shot looking up at the Flame Tower against the night sky
+      const orbit = Math.sin(elapsed * 0.35) * 1.1;
+      outPos.set(1.5 + orbit * 0.6, 1.15, 4.4 - orbit * 0.4);
+      outLook.set(5.05, 3.15, 0.25);
+    } else if (sceneIdx === 3) {
+      // Scene 3: Far Chaos Portal reverse perspective looking down the lane toward the castle
+      const sway = Math.sin(elapsed * 0.3) * 1.6;
+      outPos.set(-2.6 + sway, 3.4, -18.8);
+      outLook.set(0.6, 2.1, 6.0);
+    } else {
+      // Scene 0: Iconic 2nd-person castle battlement overlook
+      const sway = Math.sin(elapsed * 0.28) * 2.2;
+      outPos.set(sway, 14.0, 25.0);
+      outLook.set(0, 1.2, -5.0);
+    }
+  }
+
   private updateCamera(dt: number): void {
-    if (this.mode === 'lobby_preview') {
-      const sway = Math.sin(this.clock.elapsedTime * 0.28) * 2.2;
-      _camTargetPos.set(sway, 14.0, 25.0);
-      _camTargetLook.set(0, 1.2, -5.0);
+    let lambda = 4.5;
+    if (this.mode === 'lobby_preview' && this.introActive) {
+      const introSway = Math.sin(this.clock.elapsedTime * 0.22) * 3.4;
+      _camTargetPos.set(introSway, 15.6, 26.5);
+      _camTargetLook.set(introSway * 0.15, 1.3, -5.5);
+      lambda = 1.65;
+    } else if (this.mode === 'lobby_preview') {
+      this.computeLobbySceneCamera(
+        this.lobbySceneIndex,
+        this.lobbySceneElapsed,
+        _camTargetPos,
+        _camTargetLook,
+      );
+      lambda = 3.2;
     } else if (this.cameraPreset === CameraPreset.SECOND_PERSON) {
       _camTargetPos.set(0, 14.8, 24.8);
       _camTargetLook.set(0, 0.8, -5.5);
+      lambda = 3.2;
     } else if (this.cameraPreset === CameraPreset.TACTICAL_HIGH) {
       _camTargetPos.set(0, 27.5, 13.5);
       _camTargetLook.set(0, 0.0, -3.5);
@@ -1392,7 +1595,6 @@ export class TowerDefenseEngine {
       _camTargetLook.set(0, 0.8, -3.5);
     }
 
-    const lambda = 4.5;
     this.camera.position.x = THREE.MathUtils.damp(this.camera.position.x, _camTargetPos.x, lambda, dt);
     this.camera.position.y = THREE.MathUtils.damp(this.camera.position.y, _camTargetPos.y, lambda, dt);
     this.camera.position.z = THREE.MathUtils.damp(this.camera.position.z, _camTargetPos.z, lambda, dt);

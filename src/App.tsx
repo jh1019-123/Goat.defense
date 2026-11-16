@@ -1,7 +1,16 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { onAuthStateChanged, signInWithPopup, signOut, User } from 'firebase/auth';
+import {
+  getRedirectResult,
+  onAuthStateChanged,
+  signInWithPopup,
+  signInWithRedirect,
+  signOut,
+  User,
+} from 'firebase/auth';
 import supabaseSqlText from '../supabase_schema.sql?raw';
 import { BattleHud } from './components/BattleHud';
+import { BattleTransitionOverlay } from './components/BattleTransitionOverlay';
+import { IntroOverlay } from './components/IntroOverlay';
 import { LobbyOverlay } from './components/LobbyOverlay';
 import {
   MAX_CASTLE_HP,
@@ -11,19 +20,23 @@ import { TowerDefenseEngine } from './game/TowerDefenseEngine';
 import { soundEngine } from './lib/audio';
 import {
   auth,
+  firebaseProjectId,
   googleAuthProvider,
   testFirestoreConnection,
 } from './lib/firebase';
 import {
   loadGuestSaveData,
+  sanitizeDisplayName,
   saveGuestSaveData,
   ensureAndSyncUserProfile,
   subscribeLeaderboard,
   subscribeUserProfile,
+  updateLeaderboardDisplayName,
   updateUserProfileFields,
   upsertLeaderboardRecord,
 } from './lib/playerStorage';
 import {
+  AuthErrorDiagnostic,
   BattleHudState,
   CameraPreset,
   LeaderboardRecord,
@@ -32,6 +45,63 @@ import {
   TowerBranch,
   TowerType,
 } from './types/game';
+
+function buildAuthErrorDiagnostic(error: unknown): AuthErrorDiagnostic | null {
+  const errObj = error as { code?: string; message?: string } | null;
+  const code = errObj?.code ?? 'auth/unknown';
+
+  // User manually closed the popup window
+  if (code === 'auth/popup-closed-by-user' || code === 'auth/cancelled-popup-request') {
+    return null;
+  }
+
+  const hostname = typeof window !== 'undefined' ? window.location.hostname : '';
+  const isTopFrame = typeof window !== 'undefined' && window.self === window.top;
+
+  if (code === 'auth/unauthorized-domain') {
+    return {
+      code,
+      title: '승인되지 않은 도메인 (Vercel 등 외부 배포 환경)',
+      detail:
+        'Firebase 인증 보안 설정에 현재 도메인이 등록되어 있지 않아 Google 로그인이 차단되었습니다. 아래 도메인을 복사해 Firebase Console의 승인된 도메인에 추가해주세요.',
+      hostname,
+      projectId: firebaseProjectId,
+      canTryRedirect: false,
+    };
+  }
+
+  if (code === 'auth/popup-blocked') {
+    return {
+      code,
+      title: '로그인 팝업이 차단되었습니다',
+      detail:
+        '브라우저 팝업 차단을 해제하거나, 아래 버튼을 눌러 리다이렉트 방식으로 로그인해주세요.',
+      hostname,
+      projectId: firebaseProjectId,
+      canTryRedirect: isTopFrame,
+    };
+  }
+
+  if (code === 'auth/operation-not-allowed') {
+    return {
+      code,
+      title: 'Google 로그인 공급자 비활성화',
+      detail: 'Firebase Console Authentication에서 Google 로그인 사용 설정을 확인해주세요.',
+      hostname,
+      projectId: firebaseProjectId,
+      canTryRedirect: false,
+    };
+  }
+
+  return {
+    code,
+    title: 'Google 로그인에 실패했습니다',
+    detail: `오류 코드(${code})가 발생했습니다. 외부 배포 도메인이라면 승인된 도메인 등록 여부를 확인해주세요.`,
+    hostname,
+    projectId: firebaseProjectId,
+    canTryRedirect: isTopFrame,
+  };
+}
 
 const INITIAL_HUD: BattleHudState = {
   phase: 'prep',
@@ -64,12 +134,17 @@ export default function App() {
   const engineRef = useRef<TowerDefenseEngine | null>(null);
 
   const [screen, setScreen] = useState<'lobby' | 'battle'>('lobby');
+  const [showIntro, setShowIntro] = useState(true);
+  const [battleTransitioning, setBattleTransitioning] = useState(false);
+  const [lobbyBgFade, setLobbyBgFade] = useState(false);
+  const lobbySceneRef = useRef(0);
   const [hud, setHud] = useState<BattleHudState>(INITIAL_HUD);
   const [cameraPreset, setCameraPreset] = useState<CameraPreset>(CameraPreset.SECOND_PERSON);
   const [muted, setMuted] = useState(false);
 
   const [firebaseUser, setFirebaseUser] = useState<User | null>(null);
   const [authLoading, setAuthLoading] = useState(false);
+  const [authError, setAuthError] = useState<AuthErrorDiagnostic | null>(null);
   const [saveData, setSaveData] = useState<PlayerSaveData>(() => loadGuestSaveData());
   const [leaderboard, setLeaderboard] = useState<LeaderboardRecord[]>([]);
   const [leaderboardError, setLeaderboardError] = useState<string | null>(null);
@@ -88,6 +163,40 @@ export default function App() {
     }
   }, [saveData]);
 
+  // Cycle lobby 3D background camera angles every 10s with smooth fade-out / fade-in
+  useEffect(() => {
+    if (screen !== 'lobby' || showIntro || battleTransitioning) {
+      setLobbyBgFade(false);
+      return;
+    }
+    const prefersReduced = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+    if (prefersReduced) return;
+
+    lobbySceneRef.current = 0;
+    engineRef.current?.setLobbyScene(0, false);
+
+    let fadeTimer: number | null = null;
+    let revealTimer: number | null = null;
+
+    const intervalId = window.setInterval(() => {
+      setLobbyBgFade(true);
+      fadeTimer = window.setTimeout(() => {
+        lobbySceneRef.current = (lobbySceneRef.current + 1) % 4;
+        engineRef.current?.setLobbyScene(lobbySceneRef.current, true);
+        revealTimer = window.setTimeout(() => {
+          setLobbyBgFade(false);
+        }, 70);
+      }, 520);
+    }, 10000);
+
+    return () => {
+      clearInterval(intervalId);
+      if (fadeTimer !== null) clearTimeout(fadeTimer);
+      if (revealTimer !== null) clearTimeout(revealTimer);
+      setLobbyBgFade(false);
+    };
+  }, [screen, showIntro, battleTransitioning]);
+
   // Boot Firestore connection check & subscribe to public real-time leaderboard
   useEffect(() => {
     void testFirestoreConnection();
@@ -103,12 +212,20 @@ export default function App() {
     return () => unsubLb();
   }, []);
 
-  // Firebase Auth state & user profile real-time sync
+  // Firebase Auth state & user profile real-time sync + redirect fallback result check
   useEffect(() => {
     let unsubProfile: (() => void) | null = null;
 
+    getRedirectResult(auth).catch((err) => {
+      const diag = buildAuthErrorDiagnostic(err);
+      if (diag) setAuthError(diag);
+    });
+
     const unsubAuth = onAuthStateChanged(auth, async (user) => {
       setFirebaseUser(user);
+      if (user) {
+        setAuthError(null);
+      }
       if (unsubProfile) {
         unsubProfile();
         unsubProfile = null;
@@ -216,13 +333,38 @@ export default function App() {
     };
   }, []);
 
+  const handleIntroComplete = useCallback(() => {
+    setShowIntro(false);
+    engineRef.current?.setIntroActive(false);
+  }, []);
+
   const handleSignIn = useCallback(async () => {
     setAuthLoading(true);
+    setAuthError(null);
     try {
       await signInWithPopup(auth, googleAuthProvider);
     } catch (error) {
       console.error('Google Sign-In failed:', error);
+      const diag = buildAuthErrorDiagnostic(error);
+      if (diag) {
+        setAuthError(diag);
+      }
     } finally {
+      setAuthLoading(false);
+    }
+  }, []);
+
+  const handleSignInRedirect = useCallback(async () => {
+    setAuthLoading(true);
+    setAuthError(null);
+    try {
+      await signInWithRedirect(auth, googleAuthProvider);
+    } catch (error) {
+      console.error('Google Redirect Sign-In failed:', error);
+      const diag = buildAuthErrorDiagnostic(error);
+      if (diag) {
+        setAuthError(diag);
+      }
       setAuthLoading(false);
     }
   }, []);
@@ -230,16 +372,25 @@ export default function App() {
   const handleSignOut = useCallback(async () => {
     try {
       await signOut(auth);
+      setAuthError(null);
     } catch (error) {
       console.error('Sign-Out failed:', error);
     }
   }, []);
 
   const handleStartBattle = useCallback(() => {
+    setBattleTransitioning(true);
+  }, []);
+
+  const handleBattleTransitionPeak = useCallback(() => {
     setScreen('battle');
     setCameraPreset(CameraPreset.SECOND_PERSON);
     engineRef.current?.setCameraPreset(CameraPreset.SECOND_PERSON);
     engineRef.current?.startNewBattle();
+  }, []);
+
+  const handleBattleTransitionFinished = useCallback(() => {
+    setBattleTransitioning(false);
   }, []);
 
   const handleExitToLobby = useCallback(() => {
@@ -340,6 +491,22 @@ export default function App() {
     }
   }, []);
 
+  const handleUpdateDisplayName = useCallback(async (rawName: string) => {
+    const safeName = sanitizeDisplayName(rawName);
+    const current = saveDataRef.current;
+    setSaveData({
+      ...current,
+      displayName: safeName,
+    });
+
+    if (userRef.current) {
+      await Promise.all([
+        updateUserProfileFields(userRef.current.uid, { displayName: safeName }),
+        updateLeaderboardDisplayName(userRef.current.uid, safeName),
+      ]);
+    }
+  }, []);
+
   const handleCycleCamera = useCallback(() => {
     setCameraPreset((prev) => {
       const next =
@@ -373,21 +540,41 @@ export default function App() {
       {/* Isolated WebGL Canvas Container */}
       <div ref={canvasMountRef} className="absolute inset-0 h-full w-full" />
 
-      {screen === 'lobby' ? (
-        <LobbyOverlay
-          saveData={saveData}
-          isSignedIn={Boolean(firebaseUser)}
-          authLoading={authLoading}
-          leaderboard={leaderboard}
-          leaderboardError={leaderboardError}
-          supabaseSqlText={supabaseSqlText}
-          onStartBattle={handleStartBattle}
-          onSignIn={handleSignIn}
-          onSignOut={handleSignOut}
-          onBuySkin={handleBuySkin}
-          onEquipSkin={handleEquipSkin}
-          onBuySkill={handleBuySkill}
+      {/* Background-only Fade Curtain for 10s Lobby Camera Angle Cuts (sits under LobbyOverlay z-10) */}
+      {screen === 'lobby' && !showIntro && (
+        <div
+          aria-hidden="true"
+          className={`pointer-events-none fixed inset-0 z-[5] bg-[#060912] transition-opacity duration-500 ease-in-out ${
+            lobbyBgFade ? 'opacity-100' : 'opacity-0'
+          }`}
         />
+      )}
+
+      {screen === 'lobby' ? (
+        <div
+          className={`relative z-10 transition-opacity duration-700 ease-out ${
+            showIntro ? 'pointer-events-none opacity-0' : 'opacity-100'
+          }`}
+        >
+          <LobbyOverlay
+            saveData={saveData}
+            isSignedIn={Boolean(firebaseUser)}
+            authLoading={authLoading}
+            authError={authError}
+            leaderboard={leaderboard}
+            leaderboardError={leaderboardError}
+            supabaseSqlText={supabaseSqlText}
+            onStartBattle={handleStartBattle}
+            onSignIn={handleSignIn}
+            onSignInRedirect={handleSignInRedirect}
+            onDismissAuthError={() => setAuthError(null)}
+            onSignOut={handleSignOut}
+            onUpdateDisplayName={handleUpdateDisplayName}
+            onBuySkin={handleBuySkin}
+            onEquipSkin={handleEquipSkin}
+            onBuySkill={handleBuySkill}
+          />
+        </div>
       ) : (
         <BattleHud
           hud={hud}
@@ -408,6 +595,14 @@ export default function App() {
           onExitToLobby={handleExitToLobby}
         />
       )}
+
+      {showIntro && <IntroOverlay onComplete={handleIntroComplete} />}
+
+      <BattleTransitionOverlay
+        active={battleTransitioning}
+        onCurtainPeak={handleBattleTransitionPeak}
+        onFinished={handleBattleTransitionFinished}
+      />
     </div>
   );
 }

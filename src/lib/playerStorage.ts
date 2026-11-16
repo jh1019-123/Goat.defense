@@ -98,7 +98,13 @@ export async function ensureAndSyncUserProfile(
 ): Promise<PlayerSaveData> {
   const path = `users/${user.uid}`;
   const userRef = doc(db, 'users', user.uid);
-  const displayName = sanitizeDisplayName(user.displayName || user.email?.split('@')[0] || '성주 지휘관');
+  const customGuestName =
+    guestData?.displayName && guestData.displayName !== '성주 지휘관'
+      ? guestData.displayName
+      : null;
+  const displayName = sanitizeDisplayName(
+    customGuestName || user.displayName || user.email?.split('@')[0] || '성주 지휘관',
+  );
 
   try {
     const snap = await getDoc(userRef);
@@ -186,6 +192,27 @@ export async function updateUserProfileFields(
 
   try {
     await updateDoc(userRef, payload);
+  } catch (error) {
+    handleFirestoreError(error, OperationType.UPDATE, path);
+  }
+}
+
+export async function updateLeaderboardDisplayName(
+  uid: string,
+  displayName: string,
+): Promise<void> {
+  const path = `leaderboard/${uid}`;
+  const lbRef = doc(db, 'leaderboard', uid);
+  const safeName = sanitizeDisplayName(displayName);
+
+  try {
+    const snap = await getDoc(lbRef);
+    if (snap.exists()) {
+      await updateDoc(lbRef, {
+        displayName: safeName,
+        updatedAt: serverTimestamp(),
+      });
+    }
   } catch (error) {
     handleFirestoreError(error, OperationType.UPDATE, path);
   }

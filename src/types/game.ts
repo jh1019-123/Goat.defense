@@ -160,3 +160,12 @@ export interface LeaderboardRecord {
   bossesDefeated: number;
   updatedAtMs: number;
 }
+
+export interface AuthErrorDiagnostic {
+  code: string;
+  title: string;
+  detail: string;
+  hostname: string;
+  projectId: string;
+  canTryRedirect: boolean;
+}

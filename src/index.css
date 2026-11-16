@@ -30,6 +30,110 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* Tasteful 3D chiseled metallic typography for TOP OF CHAOS */
+.title-3d-chaos {
+  font-family: var(--font-display);
+  font-weight: 900;
+  letter-spacing: 0.1em;
+  background: linear-gradient(
+    180deg,
+    #ffffff 0%,
+    #e2e8f0 20%,
+    #fde68a 42%,
+    #f59e0b 62%,
+    #c2410c 84%,
+    #7c2d12 100%
+  );
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  filter: drop-shadow(0 1.5px 0 #451a03)
+    drop-shadow(0 3.5px 0 #2d1208)
+    drop-shadow(0 6px 0 #150817)
+    drop-shadow(0 14px 30px rgba(88, 28, 135, 0.55))
+    drop-shadow(0 20px 36px rgba(0, 0, 0, 0.85));
+}
+
+.title-3d-sub {
+  letter-spacing: 0.34em;
+  text-shadow:
+    0 2px 0 rgba(15, 23, 42, 0.95),
+    0 0 18px rgba(56, 189, 248, 0.35),
+    0 6px 18px rgba(0, 0, 0, 0.85);
+}
+
+.title-3d-sm {
+  font-family: var(--font-display);
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  background: linear-gradient(180deg, #f8fafc 0%, #fde68a 48%, #ea580c 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  filter: drop-shadow(0 1.5px 0 #3b0764) drop-shadow(0 4px 10px rgba(0, 0, 0, 0.75));
+}
+
+@keyframes chaosIntroRise {
+  0% {
+    opacity: 0;
+    transform: translate3d(0, 22px, 0) scale(0.92);
+  }
+  100% {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+}
+
+@keyframes chaosLineExpand {
+  0% {
+    opacity: 0;
+    transform: scaleX(0.08);
+  }
+  100% {
+    opacity: 1;
+    transform: scaleX(1);
+  }
+}
+
+@keyframes chaosMoteDrift {
+  0% {
+    opacity: 0;
+    transform: translate3d(0, 24px, 0) rotate(45deg) scale(0.6);
+  }
+  25% {
+    opacity: 0.85;
+  }
+  80% {
+    opacity: 0.65;
+  }
+  100% {
+    opacity: 0;
+    transform: translate3d(0, -90px, 0) rotate(135deg) scale(1);
+  }
+}
+
+.animate-chaos-rise {
+  animation: chaosIntroRise 950ms cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+.animate-chaos-line {
+  animation: chaosLineExpand 850ms cubic-bezier(0.22, 1, 0.36, 1) 180ms both;
+}
+
+.animate-chaos-mote {
+  animation: chaosMoteDrift 4.8s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-chaos-rise,
+  .animate-chaos-line,
+  .animate-chaos-mote {
+    animation: none !important;
+    opacity: 1 !important;
+    transform: none !important;
+  }
+}
+
 /* Custom thin dark scrollbar for shop and leaderboard modals */
 ::-webkit-scrollbar {
   width: 6px;

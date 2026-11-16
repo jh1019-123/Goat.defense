@@ -1,21 +1,17 @@
 import React, { useEffect, useState } from 'react';
 import {
+  AlertTriangle,
   Check,
   Code2,
   Copy,
-  Crown,
-  Flame,
   Gem,
   LogIn,
   LogOut,
+  Pencil,
   Play,
-  Shield,
-  Snowflake,
   Sparkles,
-  Swords,
   Trophy,
   X,
-  Zap,
 } from 'lucide-react';
 import {
   LORD_SKILLS,
@@ -23,6 +19,7 @@ import {
   TOWER_SKINS,
 } from '../data/gameConfig';
 import {
+  AuthErrorDiagnostic,
   LeaderboardRecord,
   PlayerSaveData,
   SkillId,
@@ -35,12 +32,16 @@ interface LobbyOverlayProps {
   saveData: PlayerSaveData;
   isSignedIn: boolean;
   authLoading: boolean;
+  authError: AuthErrorDiagnostic | null;
   leaderboard: LeaderboardRecord[];
   leaderboardError: string | null;
   supabaseSqlText: string;
   onStartBattle: () => void;
   onSignIn: () => void;
+  onSignInRedirect: () => void;
+  onDismissAuthError: () => void;
   onSignOut: () => void;
+  onUpdateDisplayName: (newName: string) => Promise<void>;
   onBuySkin: (skinId: string, price: number) => void;
   onEquipSkin: (towerType: TowerType, skinId: string | undefined) => void;
   onBuySkill: (skillId: SkillId, cost: number) => void;
@@ -50,12 +51,16 @@ export const LobbyOverlay: React.FC<LobbyOverlayProps> = ({
   saveData,
   isSignedIn,
   authLoading,
+  authError,
   leaderboard,
   leaderboardError,
   supabaseSqlText,
   onStartBattle,
   onSignIn,
+  onSignInRedirect,
+  onDismissAuthError,
   onSignOut,
+  onUpdateDisplayName,
   onBuySkin,
   onEquipSkin,
   onBuySkill,
@@ -63,6 +68,23 @@ export const LobbyOverlay: React.FC<LobbyOverlayProps> = ({
   const [activeTab, setActiveTab] = useState<LobbyTab>('home');
   const [showSqlModal, setShowSqlModal] = useState(false);
   const [copiedSql, setCopiedSql] = useState(false);
+  const [copiedHost, setCopiedHost] = useState(false);
+  const [editingName, setEditingName] = useState(false);
+  const [nameDraft, setNameDraft] = useState(saveData.displayName);
+  const [savingName, setSavingName] = useState(false);
+  const [savedNameToast, setSavedNameToast] = useState(false);
+
+  useEffect(() => {
+    if (!editingName) {
+      setNameDraft(saveData.displayName);
+    }
+  }, [saveData.displayName, editingName]);
+
+  useEffect(() => {
+    if (!savedNameToast) return;
+    const t = setTimeout(() => setSavedNameToast(false), 2000);
+    return () => clearTimeout(t);
+  }, [savedNameToast]);
 
   useEffect(() => {
     if (!copiedSql) return;
@@ -70,12 +92,42 @@ export const LobbyOverlay: React.FC<LobbyOverlayProps> = ({
     return () => clearTimeout(t);
   }, [copiedSql]);
 
+  useEffect(() => {
+    if (!copiedHost) return;
+    const t = setTimeout(() => setCopiedHost(false), 1800);
+    return () => clearTimeout(t);
+  }, [copiedHost]);
+
   const handleCopySql = async () => {
     try {
       await navigator.clipboard.writeText(supabaseSqlText);
       setCopiedSql(true);
     } catch {
       // Fallback ignored
+    }
+  };
+
+  const handleCopyHost = async (hostname: string) => {
+    try {
+      await navigator.clipboard.writeText(hostname);
+      setCopiedHost(true);
+    } catch {
+      // Fallback ignored
+    }
+  };
+
+  const handleSaveNickname = async () => {
+    const trimmed = nameDraft.trim();
+    if (!trimmed || savingName) return;
+    setSavingName(true);
+    try {
+      await onUpdateDisplayName(trimmed);
+      setEditingName(false);
+      setSavedNameToast(true);
+    } catch {
+      // Errors logged in storage layer
+    } finally {
+      setSavingName(false);
     }
   };
 
@@ -87,9 +139,12 @@ export const LobbyOverlay: React.FC<LobbyOverlayProps> = ({
         <button
           type="button"
           onClick={() => setActiveTab('home')}
-          className="font-display text-xl font-bold tracking-wide text-amber-400 whitespace-nowrap shrink-0"
+          className="flex items-baseline gap-2.5 whitespace-nowrap shrink-0 text-left"
         >
-          Bastion Siege 3D
+          <span className="title-3d-sm text-xl">TOP OF CHAOS</span>
+          <span className="hidden text-xs font-semibold text-slate-400 sm:inline">
+            탑 오브 카오스
+          </span>
         </button>
 
         {/* Zone 2: Clean single-line navigation links */}
@@ -163,18 +218,31 @@ export const LobbyOverlay: React.FC<LobbyOverlayProps> = ({
       <main className="flex-1 overflow-y-auto p-6 md:p-10">
         {activeTab === 'home' && (
           <div className="mx-auto flex h-full max-w-6xl items-end md:items-center">
-            <section className="pointer-events-auto w-full max-w-lg rounded-2xl border border-slate-800 bg-[#0b0f17]/92 p-7 shadow-2xl">
-              <div className="flex items-center gap-2 text-xs font-medium text-amber-400">
+            <section className="pointer-events-auto relative w-full max-w-lg overflow-hidden rounded-2xl border border-indigo-400/25 bg-gradient-to-br from-[#0e1529]/92 via-[#0c1120]/94 to-[#160f24]/92 p-7 shadow-[0_24px_60px_rgba(0,0,0,0.75)]">
+              <div
+                aria-hidden="true"
+                className="pointer-events-none absolute inset-x-0 top-0 h-[2px]"
+                style={{
+                  background:
+                    'linear-gradient(90deg, rgba(56,189,248,0.85) 0%, rgba(251,191,36,0.95) 50%, rgba(244,63,94,0.85) 100%)',
+                }}
+              />
+              <div className="flex items-center gap-2 text-xs font-medium text-sky-300">
                 <span>2인칭 성벽 시점</span>
-                <span aria-hidden="true">·</span>
-                <span>격자 좌표 배치</span>
-                <span aria-hidden="true">·</span>
-                <span>무제한 웨이브</span>
+                <span aria-hidden="true" className="text-slate-500">·</span>
+                <span className="text-amber-300">격자 좌표 배치</span>
+                <span aria-hidden="true" className="text-slate-500">·</span>
+                <span className="text-rose-300">무제한 웨이브</span>
               </div>
 
-              <h1 className="font-display mt-3 text-3xl font-bold leading-tight text-white [text-wrap:balance] md:text-4xl">
-                성문을 수호하고 끝없는 웨이브를 돌파하세요
-              </h1>
+              <div className="mt-3">
+                <h1 className="title-3d-chaos text-3xl leading-tight sm:text-4xl">
+                  TOP OF CHAOS
+                </h1>
+                <div className="mt-1 text-base font-bold tracking-wide text-slate-100">
+                  탑 오브 카오스 — 성문을 수호하라
+                </div>
+              </div>
 
               <p className="mt-3 text-sm leading-relaxed text-slate-300">
                 중앙 통로 양옆의 좌표 격자 위에 아처, 플레임, 프로스트, 라이트닝 타워를 전략적으로 배치하세요. 매 웨이브마다 3코인과 크리스탈이 지급되며, 5웨이브마다 중간보스, 10웨이브마다 빅보스가 등장합니다.
@@ -389,10 +457,77 @@ export const LobbyOverlay: React.FC<LobbyOverlayProps> = ({
               </button>
             </div>
 
+            {/* Commander Nickname Customization Bar */}
+            <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-800 bg-slate-900/75 px-4 py-3">
+              <div className="flex flex-wrap items-center gap-2 text-xs">
+                <span className="text-slate-400">내 리더보드 닉네임:</span>
+                {!editingName ? (
+                  <span className="font-bold text-white">{saveData.displayName}</span>
+                ) : (
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="text"
+                      value={nameDraft}
+                      maxLength={24}
+                      autoFocus
+                      onChange={(e) => setNameDraft(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') void handleSaveNickname();
+                        if (e.key === 'Escape') {
+                          setEditingName(false);
+                          setNameDraft(saveData.displayName);
+                        }
+                      }}
+                      placeholder="새 닉네임 입력 (최대 24자)"
+                      className="w-44 rounded-lg border border-amber-400/60 bg-slate-950 px-2.5 py-1 text-xs text-white outline-none focus:border-amber-400"
+                    />
+                    <button
+                      type="button"
+                      disabled={savingName || nameDraft.trim().length === 0}
+                      onClick={() => void handleSaveNickname()}
+                      className="rounded-lg bg-amber-500 px-3 py-1 text-xs font-bold text-slate-950 hover:bg-amber-400 disabled:opacity-50"
+                    >
+                      {savingName ? '저장 중...' : '저장'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEditingName(false);
+                        setNameDraft(saveData.displayName);
+                      }}
+                      className="rounded-lg border border-slate-700 px-2.5 py-1 text-xs text-slate-300 hover:text-white"
+                    >
+                      취소
+                    </button>
+                  </div>
+                )}
+                {savedNameToast && (
+                  <span className="flex items-center gap-1 text-emerald-400 font-semibold">
+                    <Check className="h-3.5 w-3.5" />
+                    변경 완료
+                  </span>
+                )}
+              </div>
+
+              {!editingName && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setNameDraft(saveData.displayName);
+                    setEditingName(true);
+                  }}
+                  className="flex items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-800/90 px-3 py-1.5 text-xs font-semibold text-slate-200 hover:border-amber-400/60 hover:text-amber-300 transition-colors"
+                >
+                  <Pencil className="h-3.5 w-3.5" />
+                  <span>닉네임 수정</span>
+                </button>
+              )}
+            </div>
+
             {!isSignedIn && (
-              <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-xs text-amber-200">
+              <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-xs text-amber-200">
                 <span>
-                  Google 계정으로 로그인하면 본인의 최고 웨이브 기록이 실시간 리더보드에 등록됩니다.
+                  Google 계정으로 로그인하면 위 닉네임으로 실시간 리더보드에 기록이 등록됩니다.
                 </span>
                 <button
                   type="button"
@@ -448,10 +583,25 @@ export const LobbyOverlay: React.FC<LobbyOverlayProps> = ({
                             )}
                           </td>
                           <td className="py-3 px-3 font-medium">
-                            {row.displayName}
-                            {isMe && (
-                              <span className="ml-2 text-xs text-amber-400">(나)</span>
-                            )}
+                            <span className="inline-flex items-center gap-2">
+                              <span>{row.displayName}</span>
+                              {isMe && (
+                                <>
+                                  <span className="text-xs text-amber-400">(나)</span>
+                                  <button
+                                    type="button"
+                                    title="내 닉네임 수정"
+                                    onClick={() => {
+                                      setNameDraft(saveData.displayName);
+                                      setEditingName(true);
+                                    }}
+                                    className="rounded p-1 text-slate-400 hover:bg-slate-800 hover:text-amber-300"
+                                  >
+                                    <Pencil className="h-3 w-3" />
+                                  </button>
+                                </>
+                              )}
+                            </span>
                           </td>
                           <td className="py-3 px-3 text-right font-mono-num font-bold text-amber-300">
                             Wave {row.bestWave}
@@ -473,34 +623,73 @@ export const LobbyOverlay: React.FC<LobbyOverlayProps> = ({
         )}
       </main>
 
-      {/* Tower Guide Footer Strip on Home Tab */}
-      {activeTab === 'home' && (
-        <footer className="pointer-events-auto border-t border-slate-800/70 bg-[#0b0f17]/90 px-6 py-3">
-          <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-4 text-xs text-slate-400">
-            <div className="flex flex-wrap items-center gap-5">
-              <span className="flex items-center gap-1.5 text-slate-300">
-                <Swords className="h-3.5 w-3.5 text-sky-400" />
-                아처: 1초 사격 · 장거리 공속 트리
-              </span>
-              <span className="flex items-center gap-1.5 text-slate-300">
-                <Flame className="h-3.5 w-3.5 text-orange-400" />
-                플레임: 3초 고화력 · 30% 화상
-              </span>
-              <span className="flex items-center gap-1.5 text-slate-300">
-                <Snowflake className="h-3.5 w-3.5 text-cyan-400" />
-                프로스트: 광역 감속 & 빙결
-              </span>
-              <span className="flex items-center gap-1.5 text-slate-300">
-                <Zap className="h-3.5 w-3.5 text-purple-400" />
-                라이트닝: 다중 연쇄 번개
-              </span>
+      {/* Google Auth Diagnostic Modal (helps resolve Vercel / external domain setup) */}
+      {authError && (
+        <div className="pointer-events-auto fixed inset-0 z-40 flex items-center justify-center bg-slate-950/80 p-4">
+          <div className="w-full max-w-lg rounded-2xl border border-amber-500/40 bg-[#0f172a] p-6 shadow-2xl">
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex items-center gap-2.5">
+                <AlertTriangle className="h-5 w-5 shrink-0 text-amber-400" />
+                <h3 className="text-base font-bold text-white">{authError.title}</h3>
+              </div>
+              <button
+                type="button"
+                onClick={onDismissAuthError}
+                className="rounded-lg border border-slate-700 p-1 text-slate-400 hover:text-white"
+              >
+                <X className="h-4 w-4" />
+              </button>
             </div>
-            <div className="flex items-center gap-2 text-slate-400">
-              <Shield className="h-3.5 w-3.5 text-amber-400" />
-              <span>5웨이브 중간보스 · 10웨이브 빅보스 (중복 없음)</span>
+
+            <p className="mt-3 text-xs leading-relaxed text-slate-300">{authError.detail}</p>
+
+            {authError.code === 'auth/unauthorized-domain' && authError.hostname && (
+              <div className="mt-4 rounded-xl border border-slate-700 bg-slate-900/90 p-4">
+                <div className="text-[11px] font-semibold text-slate-400">현재 접속 도메인</div>
+                <div className="mt-1.5 flex items-center justify-between gap-2">
+                  <code className="font-mono text-xs font-bold text-amber-300 break-all">
+                    {authError.hostname}
+                  </code>
+                  <button
+                    type="button"
+                    onClick={() => handleCopyHost(authError.hostname)}
+                    className="flex shrink-0 items-center gap-1 rounded-lg bg-amber-500 px-2.5 py-1.5 text-[11px] font-bold text-slate-950 hover:bg-amber-400"
+                  >
+                    {copiedHost ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
+                    <span>{copiedHost ? '복사됨' : '도메인 복사'}</span>
+                  </button>
+                </div>
+                <ol className="mt-3 space-y-1 text-[11px] leading-relaxed text-slate-300">
+                  <li>
+                    1. Firebase Console에서 프로젝트(
+                    <span className="font-mono text-cyan-300">{authError.projectId}</span>) 열기
+                  </li>
+                  <li>2. Authentication → Settings → Authorized domains 이동</li>
+                  <li>3. &quot;Add domain&quot; 클릭 후 위 도메인 붙여넣기 및 저장</li>
+                </ol>
+              </div>
+            )}
+
+            <div className="mt-5 flex flex-wrap items-center justify-end gap-2.5">
+              {authError.canTryRedirect && (
+                <button
+                  type="button"
+                  onClick={onSignInRedirect}
+                  className="rounded-lg bg-amber-500 px-4 py-2 text-xs font-bold text-slate-950 hover:bg-amber-400"
+                >
+                  리다이렉트 방식으로 로그인
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={onDismissAuthError}
+                className="rounded-lg border border-slate-700 bg-slate-800 px-4 py-2 text-xs font-semibold text-slate-200 hover:bg-slate-700"
+              >
+                확인
+              </button>
             </div>
           </div>
-        </footer>
+        </div>
       )}
 
       {/* Supabase SQL Schema Reference Modal */}
