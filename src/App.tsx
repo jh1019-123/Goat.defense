@@ -13,11 +13,36 @@ import { BattleTransitionOverlay } from './components/BattleTransitionOverlay';
 import { IntroOverlay } from './components/IntroOverlay';
 import { LobbyOverlay } from './components/LobbyOverlay';
 import {
+  COOP_STARTING_COINS,
+  COOP_WAVE_CLEAR_COIN_REWARD,
   MAX_CASTLE_HP,
   STARTING_BATTLE_COINS,
 } from './data/gameConfig';
 import { TowerDefenseEngine } from './game/TowerDefenseEngine';
 import { soundEngine } from './lib/audio';
+import {
+  sendCoopChatMessage,
+  sendLobbyChatMessage,
+  subscribeCoopChat,
+  subscribeLobbyChat,
+} from './lib/chatStorage';
+import {
+  coopBuildTowerTx,
+  coopSellTowerTx,
+  coopSetSpeedTx,
+  coopStartWaveTx,
+  coopTriggerSkillTx,
+  coopUpdateCastleHpTx,
+  coopUpgradeTowerTx,
+  coopWaveClearTx,
+  createCoopRoom,
+  endCoopRoom,
+  joinCoopRoomByCode,
+  joinCoopRoomById,
+  subscribeCoopRoom,
+  subscribeCoopTowers,
+  subscribeWaitingCoopRooms,
+} from './lib/coopStorage';
 import {
   auth,
   firebaseProjectId,
@@ -39,7 +64,12 @@ import {
   AuthErrorDiagnostic,
   BattleHudState,
   CameraPreset,
+  CoopChatMessage,
+  CoopRoomState,
+  CoopSide,
+  GameMode,
   LeaderboardRecord,
+  LobbyChatMessage,
   PlayerSaveData,
   SkillId,
   TowerBranch,
@@ -104,6 +134,10 @@ function buildAuthErrorDiagnostic(error: unknown): AuthErrorDiagnostic | null {
 }
 
 const INITIAL_HUD: BattleHudState = {
+  gameMode: 'solo',
+  coopSide: null,
+  partnerName: null,
+  roomCode: null,
   phase: 'prep',
   wave: 1,
   coins: STARTING_BATTLE_COINS,
@@ -136,6 +170,7 @@ export default function App() {
   const [screen, setScreen] = useState<'lobby' | 'battle'>('lobby');
   const [showIntro, setShowIntro] = useState(true);
   const [battleTransitioning, setBattleTransitioning] = useState(false);
+  const [transitionIsCoop, setTransitionIsCoop] = useState(false);
   const [lobbyBgFade, setLobbyBgFade] = useState(false);
   const lobbySceneRef = useRef(0);
   const [hud, setHud] = useState<BattleHudState>(INITIAL_HUD);
@@ -149,9 +184,29 @@ export default function App() {
   const [leaderboard, setLeaderboard] = useState<LeaderboardRecord[]>([]);
   const [leaderboardError, setLeaderboardError] = useState<string | null>(null);
 
-  // Refs to ensure WebGL callbacks always access fresh user & saveData without remounting canvas
+  // Lobby & Co-op Chat State
+  const [lobbyMessages, setLobbyMessages] = useState<LobbyChatMessage[]>([]);
+  const [lobbyChatError, setLobbyChatError] = useState<string | null>(null);
+  const [coopMessages, setCoopMessages] = useState<CoopChatMessage[]>([]);
+  const [coopChatError, setCoopChatError] = useState<string | null>(null);
+
+  // Co-op Room State
+  const [openCoopRooms, setOpenCoopRooms] = useState<CoopRoomState[]>([]);
+  const [activeCoopRoom, setActiveCoopRoom] = useState<CoopRoomState | null>(null);
+  const [coopActionLoading, setCoopActionLoading] = useState(false);
+  const [coopError, setCoopError] = useState<string | null>(null);
+
+  // Refs to ensure WebGL callbacks always access fresh user, saveData & co-op room without remounting canvas
   const userRef = useRef<User | null>(null);
   const saveDataRef = useRef<PlayerSaveData>(saveData);
+  const pendingBattleModeRef = useRef<GameMode>('solo');
+  const activeCoopRoomRef = useRef<CoopRoomState | null>(null);
+  const coopBattleStartedForRoomIdRef = useRef<string | null>(null);
+  const screenRef = useRef<'lobby' | 'battle'>('lobby');
+
+  useEffect(() => {
+    screenRef.current = screen;
+  }, [screen]);
   useEffect(() => {
     userRef.current = firebaseUser;
   }, [firebaseUser]);
@@ -162,8 +217,11 @@ export default function App() {
       saveGuestSaveData(saveData);
     }
   }, [saveData]);
+  useEffect(() => {
+    activeCoopRoomRef.current = activeCoopRoom;
+  }, [activeCoopRoom]);
 
-  // Cycle lobby 3D background camera angles every 10s with smooth fade-out / fade-in
+  // Cycle lobby 3D background camera angles every 7s with smooth fade-out / fade-in
   useEffect(() => {
     if (screen !== 'lobby' || showIntro || battleTransitioning) {
       setLobbyBgFade(false);
@@ -187,7 +245,7 @@ export default function App() {
           setLobbyBgFade(false);
         }, 70);
       }, 520);
-    }, 10000);
+    }, 7000);
 
     return () => {
       clearInterval(intervalId);
@@ -197,7 +255,7 @@ export default function App() {
     };
   }, [screen, showIntro, battleTransitioning]);
 
-  // Boot Firestore connection check & subscribe to public real-time leaderboard
+  // Boot Firestore connection check & subscribe to public real-time leaderboard + lobby chat
   useEffect(() => {
     void testFirestoreConnection();
     const unsubLb = subscribeLeaderboard(
@@ -209,8 +267,89 @@ export default function App() {
         setLeaderboardError('리더보드 연결 실패');
       },
     );
-    return () => unsubLb();
+    const unsubLobbyChat = subscribeLobbyChat(
+      (msgs) => {
+        setLobbyMessages(msgs);
+        setLobbyChatError(null);
+      },
+      () => {
+        setLobbyChatError('채팅을 불러오는 중 오류가 발생했습니다.');
+      },
+    );
+    return () => {
+      unsubLb();
+      unsubLobbyChat();
+    };
   }, []);
+
+  // Subscribe to open co-op rooms while on lobby & signed in
+  useEffect(() => {
+    if (!firebaseUser || screen !== 'lobby') {
+      setOpenCoopRooms([]);
+      return;
+    }
+    const unsub = subscribeWaitingCoopRooms(
+      (rooms) => setOpenCoopRooms(rooms),
+      () => {
+        // Ignore transient list errors cleanly
+      },
+    );
+    return () => unsub();
+  }, [firebaseUser, screen]);
+
+  // Subscribe to active co-op room, towers, and room chat
+  const activeRoomId = activeCoopRoom?.roomId ?? null;
+  useEffect(() => {
+    if (!activeRoomId || !firebaseUser) {
+      setCoopMessages([]);
+      return;
+    }
+
+    const unsubRoom = subscribeCoopRoom(activeRoomId, (room) => {
+      if (!room) {
+        setActiveCoopRoom(null);
+        return;
+      }
+      setActiveCoopRoom(room);
+
+      if (
+        room.status === 'playing' &&
+        coopBattleStartedForRoomIdRef.current !== room.roomId
+      ) {
+        coopBattleStartedForRoomIdRef.current = room.roomId;
+        pendingBattleModeRef.current = 'coop';
+        setTransitionIsCoop(true);
+        setBattleTransitioning(true);
+      }
+
+      if (screenRef.current === 'battle' && room.status === 'playing') {
+        engineRef.current?.syncCoopRoomState(room);
+      }
+    });
+
+    const unsubTowers = subscribeCoopTowers(activeRoomId, (towers) => {
+      if (screenRef.current === 'battle') {
+        engineRef.current?.syncCoopTowers(towers);
+      }
+    });
+
+    const unsubChat = subscribeCoopChat(
+      activeRoomId,
+      (msgs) => {
+        setCoopMessages(msgs);
+        setCoopChatError(null);
+      },
+      () => {
+        setCoopChatError('협동 채팅 연결 오류');
+      },
+    );
+
+    return () => {
+      unsubRoom();
+      unsubTowers();
+      unsubChat();
+    };
+  }, [activeRoomId, firebaseUser]);
 
   // Firebase Auth state & user profile real-time sync + redirect fallback result check
   useEffect(() => {
@@ -322,6 +461,74 @@ export default function App() {
           );
         }
       },
+      onCoopBuildTower: (slotId, side, col, row, type, cost) => {
+        const room = activeCoopRoomRef.current;
+        const activeUser = userRef.current;
+        if (!room || !activeUser) return;
+        void coopBuildTowerTx(room.roomId, activeUser.uid, slotId, side, col, row, type, cost);
+      },
+      onCoopUpgradeTower: (slotId, cost, nextLevel, branch) => {
+        const room = activeCoopRoomRef.current;
+        if (!room) return;
+        void coopUpgradeTowerTx(room.roomId, slotId, cost, nextLevel, branch);
+      },
+      onCoopSellTower: (slotId) => {
+        const room = activeCoopRoomRef.current;
+        if (!room) return;
+        void coopSellTowerTx(room.roomId, slotId);
+      },
+      onCoopStartWave: () => {
+        const room = activeCoopRoomRef.current;
+        if (!room) return;
+        void coopStartWaveTx(room.roomId);
+      },
+      onCoopWaveCleared: (clearedWave, crystalsEarned) => {
+        const room = activeCoopRoomRef.current;
+        if (room) {
+          void coopWaveClearTx(room.roomId, clearedWave, COOP_WAVE_CLEAR_COIN_REWARD);
+        }
+
+        const current = saveDataRef.current;
+        const nextCrystals = current.crystals + crystalsEarned;
+        const nextBestWave = Math.max(current.bestWave, clearedWave);
+        const updated: PlayerSaveData = {
+          ...current,
+          crystals: nextCrystals,
+          bestWave: nextBestWave,
+        };
+        setSaveData(updated);
+
+        const activeUser = userRef.current;
+        if (activeUser) {
+          void updateUserProfileFields(activeUser.uid, {
+            crystals: nextCrystals,
+            bestWave: nextBestWave,
+          });
+          void upsertLeaderboardRecord(
+            activeUser.uid,
+            updated.displayName,
+            nextBestWave,
+            0,
+            0,
+          );
+        }
+      },
+      onCoopCastleDamaged: (nextHp) => {
+        const room = activeCoopRoomRef.current;
+        if (!room) return;
+        void coopUpdateCastleHpTx(room.roomId, nextHp);
+      },
+      onCoopTriggerSkill: (skillId) => {
+        const room = activeCoopRoomRef.current;
+        const activeUser = userRef.current;
+        if (!room || !activeUser) return;
+        void coopTriggerSkillTx(room.roomId, activeUser.uid, skillId);
+      },
+      onCoopSpeedChange: (mult) => {
+        const room = activeCoopRoomRef.current;
+        if (!room) return;
+        void coopSetSpeedTx(room.roomId, mult);
+      },
     });
 
     engine.setEquippedSkins(saveDataRef.current.equippedSkins);
@@ -379,6 +586,8 @@ export default function App() {
   }, []);
 
   const handleStartBattle = useCallback(() => {
+    pendingBattleModeRef.current = 'solo';
+    setTransitionIsCoop(false);
     setBattleTransitioning(true);
   }, []);
 
@@ -386,11 +595,114 @@ export default function App() {
     setScreen('battle');
     setCameraPreset(CameraPreset.SECOND_PERSON);
     engineRef.current?.setCameraPreset(CameraPreset.SECOND_PERSON);
-    engineRef.current?.startNewBattle();
+
+    if (pendingBattleModeRef.current === 'coop' && activeCoopRoomRef.current && userRef.current) {
+      const room = activeCoopRoomRef.current;
+      const isHost = room.hostUid === userRef.current.uid;
+      const coopSide: CoopSide = isHost ? 'left' : 'right';
+      const partnerName = isHost ? room.guestName : room.hostName;
+
+      engineRef.current?.startNewBattle({
+        gameMode: 'coop',
+        coopSide,
+        isHost,
+        partnerName,
+        roomCode: room.roomCode,
+        initialCoins: COOP_STARTING_COINS,
+      });
+      engineRef.current?.syncCoopRoomState(room);
+    } else {
+      engineRef.current?.startNewBattle({ gameMode: 'solo' });
+    }
   }, []);
 
   const handleBattleTransitionFinished = useCallback(() => {
     setBattleTransitioning(false);
+  }, []);
+
+  const handleCreateCoopRoom = useCallback(async () => {
+    const activeUser = userRef.current;
+    if (!activeUser) return;
+    setCoopActionLoading(true);
+    setCoopError(null);
+    try {
+      const room = await createCoopRoom(activeUser.uid, saveDataRef.current.displayName);
+      coopBattleStartedForRoomIdRef.current = null;
+      setActiveCoopRoom(room);
+    } catch (err) {
+      setCoopError(err instanceof Error ? err.message : '협동 방 생성에 실패했습니다.');
+    } finally {
+      setCoopActionLoading(false);
+    }
+  }, []);
+
+  const handleJoinCoopRoomById = useCallback(async (roomId: string) => {
+    const activeUser = userRef.current;
+    if (!activeUser) return;
+    setCoopActionLoading(true);
+    setCoopError(null);
+    try {
+      const room = await joinCoopRoomById(
+        roomId,
+        activeUser.uid,
+        saveDataRef.current.displayName,
+      );
+      coopBattleStartedForRoomIdRef.current = null;
+      setActiveCoopRoom(room);
+    } catch (err) {
+      setCoopError(err instanceof Error ? err.message : '협동 방 입장에 실패했습니다.');
+    } finally {
+      setCoopActionLoading(false);
+    }
+  }, []);
+
+  const handleJoinCoopRoomByCode = useCallback(async (code: string) => {
+    const activeUser = userRef.current;
+    if (!activeUser) return;
+    setCoopActionLoading(true);
+    setCoopError(null);
+    try {
+      const room = await joinCoopRoomByCode(
+        code,
+        activeUser.uid,
+        saveDataRef.current.displayName,
+      );
+      coopBattleStartedForRoomIdRef.current = null;
+      setActiveCoopRoom(room);
+    } catch (err) {
+      setCoopError(err instanceof Error ? err.message : '방 코드 입장에 실패했습니다.');
+    } finally {
+      setCoopActionLoading(false);
+    }
+  }, []);
+
+  const handleCancelCoopRoom = useCallback(async () => {
+    const room = activeCoopRoomRef.current;
+    setActiveCoopRoom(null);
+    coopBattleStartedForRoomIdRef.current = null;
+    if (room) {
+      await endCoopRoom(room.roomId);
+    }
+  }, []);
+
+  const handleSendLobbyChat = useCallback(async (text: string) => {
+    const activeUser = userRef.current;
+    if (!activeUser) return;
+    await sendLobbyChatMessage(activeUser.uid, saveDataRef.current.displayName, text);
+  }, []);
+
+  const handleSendCoopChat = useCallback(async (text: string) => {
+    const activeUser = userRef.current;
+    const room = activeCoopRoomRef.current;
+    if (!activeUser || !room) return;
+    const side: CoopSide = room.hostUid === activeUser.uid ? 'left' : 'right';
+    await sendCoopChatMessage(
+      room.roomId,
+      activeUser.uid,
+      saveDataRef.current.displayName,
+      side,
+      text,
+    );
   }, []);
 
   const handleExitToLobby = useCallback(() => {
@@ -424,6 +736,15 @@ export default function App() {
         );
       }
     }
+
+    const room = activeCoopRoomRef.current;
+    if (room) {
+      void endCoopRoom(room.roomId);
+    }
+    setActiveCoopRoom(null);
+    coopBattleStartedForRoomIdRef.current = null;
+    pendingBattleModeRef.current = 'solo';
+
     setScreen('lobby');
     engineRef.current?.returnToLobby();
   }, [hud.phase, hud.totalKills, hud.wave, hud.bossesDefeated]);
@@ -564,7 +885,21 @@ export default function App() {
             leaderboard={leaderboard}
             leaderboardError={leaderboardError}
             supabaseSqlText={supabaseSqlText}
+            lobbyMessages={lobbyMessages}
+            lobbyChatError={lobbyChatError}
+            openCoopRooms={openCoopRooms}
+            waitingCoopRoom={
+              activeCoopRoom && activeCoopRoom.status === 'waiting' ? activeCoopRoom : null
+            }
+            coopActionLoading={coopActionLoading}
+            coopError={coopError}
             onStartBattle={handleStartBattle}
+            onCreateCoopRoom={handleCreateCoopRoom}
+            onJoinCoopRoomById={handleJoinCoopRoomById}
+            onJoinCoopRoomByCode={handleJoinCoopRoomByCode}
+            onCancelCoopRoom={handleCancelCoopRoom}
+            onClearCoopError={() => setCoopError(null)}
+            onSendLobbyChat={handleSendLobbyChat}
             onSignIn={handleSignIn}
             onSignInRedirect={handleSignInRedirect}
             onDismissAuthError={() => setAuthError(null)}
@@ -581,6 +916,11 @@ export default function App() {
           unlockedSkills={saveData.unlockedSkills}
           muted={muted}
           cameraPreset={cameraPreset}
+          currentUid={saveData.uid}
+          isSignedIn={Boolean(firebaseUser)}
+          coopMessages={coopMessages}
+          coopChatError={coopChatError}
+          onSendCoopChat={handleSendCoopChat}
           onStartWave={() => engineRef.current?.startNextWave()}
           onSelectBuildType={(type) => engineRef.current?.setSelectedBuildType(type)}
           onUpgradeTower={handleUpgradeTower}
@@ -600,6 +940,7 @@ export default function App() {
 
       <BattleTransitionOverlay
         active={battleTransitioning}
+        isCoop={transitionIsCoop}
         onCurtainPeak={handleBattleTransitionPeak}
         onFinished={handleBattleTransitionFinished}
       />

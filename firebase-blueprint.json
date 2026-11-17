@@ -121,6 +121,224 @@
         "createdAt",
         "updatedAt"
       ]
+    },
+    "LobbyChatMessage": {
+      "title": "LobbyChatMessage",
+      "description": "Global lobby real-time chat message.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "displayName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 40
+        },
+        "text": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["id", "uid", "displayName", "text", "createdAt"]
+    },
+    "CoopRoom": {
+      "title": "CoopRoom",
+      "description": "Real-time 2-player co-op defense room with shared coins and left/right flank ownership.",
+      "type": "object",
+      "properties": {
+        "roomId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "roomCode": {
+          "type": "string",
+          "minLength": 6,
+          "maxLength": 6,
+          "pattern": "^[A-Z0-9]{6}$"
+        },
+        "hostUid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "hostName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 40
+        },
+        "guestUid": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 128
+        },
+        "guestName": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 40
+        },
+        "status": {
+          "type": "string",
+          "enum": ["waiting", "playing", "ended"]
+        },
+        "wave": {
+          "type": "integer"
+        },
+        "phase": {
+          "type": "string",
+          "enum": ["prep", "wave_active", "game_over"]
+        },
+        "coins": {
+          "type": "integer"
+        },
+        "castleHp": {
+          "type": "integer"
+        },
+        "speedMultiplier": {
+          "type": "integer"
+        },
+        "lastSkillSeq": {
+          "type": "integer"
+        },
+        "lastSkillId": {
+          "type": "string",
+          "maxLength": 40
+        },
+        "lastSkillBy": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "roomId",
+        "roomCode",
+        "hostUid",
+        "hostName",
+        "guestUid",
+        "guestName",
+        "status",
+        "wave",
+        "phase",
+        "coins",
+        "castleHp",
+        "speedMultiplier",
+        "lastSkillSeq",
+        "lastSkillId",
+        "lastSkillBy",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "CoopTower": {
+      "title": "CoopTower",
+      "description": "Tower placed on a specific left/right grid slot inside a co-op room.",
+      "type": "object",
+      "properties": {
+        "slotId": {
+          "type": "string",
+          "minLength": 6,
+          "maxLength": 20,
+          "pattern": "^(left|right)_[0-2]_[0-6]$"
+        },
+        "side": {
+          "type": "string",
+          "enum": ["left", "right"]
+        },
+        "col": {
+          "type": "integer"
+        },
+        "row": {
+          "type": "integer"
+        },
+        "type": {
+          "type": "string",
+          "enum": ["archer", "flame", "frost", "tesla"]
+        },
+        "level": {
+          "type": "integer"
+        },
+        "branch": {
+          "type": "string",
+          "enum": ["none", "path_a", "path_b"]
+        },
+        "ownerUid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "spent": {
+          "type": "integer"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["slotId", "side", "col", "row", "type", "level", "branch", "ownerUid", "spent", "updatedAt"]
+    },
+    "CoopChatMessage": {
+      "title": "CoopChatMessage",
+      "description": "Room-scoped co-op real-time chat message.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "displayName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 40
+        },
+        "side": {
+          "type": "string",
+          "enum": ["left", "right"]
+        },
+        "text": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["id", "uid", "displayName", "side", "text", "createdAt"]
     }
   },
   "firestore": {
@@ -135,6 +353,30 @@
         "$ref": "#/entities/LeaderboardEntry"
       },
       "description": "Public real-time leaderboard entries ranked by highest survived wave."
+    },
+    "/lobby_chat/{messageId}": {
+      "schema": {
+        "$ref": "#/entities/LobbyChatMessage"
+      },
+      "description": "Global real-time chat messages visible in the lobby."
+    },
+    "/coop_rooms/{roomId}": {
+      "schema": {
+        "$ref": "#/entities/CoopRoom"
+      },
+      "description": "Real-time 2-player co-op defense sessions with shared coin pool."
+    },
+    "/coop_rooms/{roomId}/towers/{slotId}": {
+      "schema": {
+        "$ref": "#/entities/CoopTower"
+      },
+      "description": "Authoritative grid tower placements per flank inside a co-op room."
+    },
+    "/coop_rooms/{roomId}/messages/{messageId}": {
+      "schema": {
+        "$ref": "#/entities/CoopChatMessage"
+      },
+      "description": "In-room real-time co-op battle chat messages."
     }
   }
 }

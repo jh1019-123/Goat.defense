@@ -105,6 +105,134 @@ service cloud.firestore {
         && data.updatedAt is timestamp;
     }
 
+    function isValidLobbyChatMessage(data, messageId) {
+      return data.keys().hasAll(['id', 'uid', 'displayName', 'text', 'createdAt'])
+        && data.keys().hasOnly(['id', 'uid', 'displayName', 'text', 'createdAt'])
+        && data.id is string
+        && data.id == messageId
+        && data.uid is string
+        && data.uid == request.auth.uid
+        && data.displayName is string
+        && data.displayName.size() >= 1
+        && data.displayName.size() <= 40
+        && data.text is string
+        && data.text.size() >= 1
+        && data.text.size() <= 200
+        && data.createdAt is timestamp;
+    }
+
+    function isValidCoopRoom(data, roomId) {
+      return data.keys().hasAll([
+          'roomId', 'roomCode', 'hostUid', 'hostName', 'guestUid', 'guestName',
+          'status', 'wave', 'phase', 'coins', 'castleHp', 'speedMultiplier',
+          'lastSkillSeq', 'lastSkillId', 'lastSkillBy', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'roomId', 'roomCode', 'hostUid', 'hostName', 'guestUid', 'guestName',
+          'status', 'wave', 'phase', 'coins', 'castleHp', 'speedMultiplier',
+          'lastSkillSeq', 'lastSkillId', 'lastSkillBy', 'createdAt', 'updatedAt'
+        ])
+        && data.roomId is string
+        && data.roomId == roomId
+        && data.roomCode is string
+        && data.roomCode.size() == 6
+        && data.roomCode.matches('^[A-Z0-9]{6}$')
+        && data.hostUid is string
+        && data.hostUid.size() >= 1
+        && data.hostUid.size() <= 128
+        && data.hostName is string
+        && data.hostName.size() >= 1
+        && data.hostName.size() <= 40
+        && data.guestUid is string
+        && data.guestUid.size() <= 128
+        && data.guestName is string
+        && data.guestName.size() <= 40
+        && data.status in ['waiting', 'playing', 'ended']
+        && data.wave is int
+        && data.wave >= 1
+        && data.wave <= 100000
+        && data.phase in ['prep', 'wave_active', 'game_over']
+        && data.coins is int
+        && data.coins >= 0
+        && data.coins <= 1000000
+        && data.castleHp is int
+        && data.castleHp >= 0
+        && data.castleHp <= 100
+        && data.speedMultiplier in [1, 2]
+        && data.lastSkillSeq is int
+        && data.lastSkillSeq >= 0
+        && data.lastSkillSeq <= 1000000
+        && data.lastSkillId is string
+        && data.lastSkillId.size() <= 40
+        && data.lastSkillBy is string
+        && data.lastSkillBy.size() <= 128
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidCoopTower(data, slotId) {
+      return data.keys().hasAll([
+          'slotId', 'side', 'col', 'row', 'type', 'level', 'branch', 'ownerUid', 'spent', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'slotId', 'side', 'col', 'row', 'type', 'level', 'branch', 'ownerUid', 'spent', 'updatedAt'
+        ])
+        && data.slotId is string
+        && data.slotId == slotId
+        && ((data.side == 'left' && data.slotId.matches('^left_[0-2]_[0-6]$'))
+          || (data.side == 'right' && data.slotId.matches('^right_[0-2]_[0-6]$')))
+        && data.side in ['left', 'right']
+        && data.col is int
+        && data.col >= 0
+        && data.col <= 2
+        && data.row is int
+        && data.row >= 0
+        && data.row <= 6
+        && data.type in ['archer', 'flame', 'frost', 'tesla']
+        && data.level is int
+        && data.level >= 1
+        && data.level <= 4
+        && data.branch in ['none', 'path_a', 'path_b']
+        && data.ownerUid is string
+        && data.ownerUid == request.auth.uid
+        && data.spent is int
+        && data.spent >= 1
+        && data.spent <= 100
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidCoopChatMessage(data, messageId) {
+      return data.keys().hasAll(['id', 'uid', 'displayName', 'side', 'text', 'createdAt'])
+        && data.keys().hasOnly(['id', 'uid', 'displayName', 'side', 'text', 'createdAt'])
+        && data.id is string
+        && data.id == messageId
+        && data.uid is string
+        && data.uid == request.auth.uid
+        && data.displayName is string
+        && data.displayName.size() >= 1
+        && data.displayName.size() <= 40
+        && data.side in ['left', 'right']
+        && data.text is string
+        && data.text.size() >= 1
+        && data.text.size() <= 200
+        && data.createdAt is timestamp;
+    }
+
+    function getCoopRoom(roomId) {
+      return get(/databases/$(database)/documents/coop_rooms/$(roomId)).data;
+    }
+
+    function isCoopMember(roomId) {
+      let r = getCoopRoom(roomId);
+      return r.hostUid == request.auth.uid || (r.guestUid != '' && r.guestUid == request.auth.uid);
+    }
+
+    function isCoopSideOwner(roomId, side) {
+      let r = getCoopRoom(roomId);
+      return (side == 'left' && r.hostUid == request.auth.uid)
+        || (side == 'right' && r.guestUid != '' && r.guestUid == request.auth.uid);
+    }
+
     // 3. Private User Profiles (Owner-only PII & Wallet Isolation)
     match /users/{userId} {
       allow get: if isSignedIn() && isValidId(userId) && request.auth.uid == userId;
@@ -158,6 +286,135 @@ service cloud.firestore {
         ]);
 
       allow delete: if false;
+    }
+
+    // 5. Global Lobby Real-Time Chat (No PII; immutable messages)
+    match /lobby_chat/{messageId} {
+      allow get: if isValidId(messageId);
+      allow list: if resource.data.createdAt is timestamp;
+
+      allow create: if isVerifiedUser()
+        && isValidId(messageId)
+        && isValidLobbyChatMessage(incoming(), messageId)
+        && incoming().createdAt == request.time;
+
+      allow update, delete: if false;
+    }
+
+    // 6. Real-Time 2-Player Co-op Rooms
+    match /coop_rooms/{roomId} {
+      allow get: if isValidId(roomId);
+      allow list: if resource.data.status in ['waiting', 'playing'];
+
+      allow create: if isVerifiedUser()
+        && isValidId(roomId)
+        && isValidCoopRoom(incoming(), roomId)
+        && incoming().hostUid == request.auth.uid
+        && incoming().guestUid == ''
+        && incoming().guestName == ''
+        && incoming().status == 'waiting'
+        && incoming().wave == 1
+        && incoming().phase == 'prep'
+        && incoming().coins == 10
+        && incoming().castleHp == 100
+        && incoming().lastSkillSeq == 0
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+
+      allow update: if isVerifiedUser()
+        && isValidId(roomId)
+        && isValidCoopRoom(incoming(), roomId)
+        && existing().status != 'ended'
+        && incoming().roomId == existing().roomId
+        && incoming().roomCode == existing().roomCode
+        && incoming().hostUid == existing().hostUid
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && (
+          // Action 1: Guest joins an open waiting room (assigned Right flank)
+          (
+            existing().status == 'waiting'
+            && existing().guestUid == ''
+            && request.auth.uid != existing().hostUid
+            && incoming().guestUid == request.auth.uid
+            && incoming().guestName.size() >= 1
+            && incoming().status == 'playing'
+            && incoming().diff(existing()).affectedKeys().hasOnly(['guestUid', 'guestName', 'status', 'updatedAt'])
+          )
+          // Action 2: Host cancels waiting room before match starts
+          || (
+            existing().status == 'waiting'
+            && request.auth.uid == existing().hostUid
+            && incoming().status == 'ended'
+            && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt'])
+          )
+          // Action 3: Room members coordinate shared coins, waves, skills, castle HP, or end match
+          || (
+            existing().status == 'playing'
+            && (request.auth.uid == existing().hostUid || (existing().guestUid != '' && request.auth.uid == existing().guestUid))
+            && incoming().guestUid == existing().guestUid
+            && incoming().wave >= existing().wave
+            && incoming().diff(existing()).affectedKeys().hasOnly([
+              'coins', 'phase', 'wave', 'castleHp', 'speedMultiplier',
+              'lastSkillSeq', 'lastSkillId', 'lastSkillBy', 'status', 'updatedAt'
+            ])
+          )
+        );
+
+      allow delete: if false;
+
+      // 6a. Authoritative Grid Towers per Flank (Host = Left, Guest = Right)
+      match /towers/{slotId} {
+        allow get: if isSignedIn() && isValidId(roomId) && isCoopMember(roomId);
+        allow list: if isSignedIn() && resource.data.side in ['left', 'right'];
+
+        allow create: if isVerifiedUser()
+          && isValidId(roomId)
+          && isValidCoopTower(incoming(), slotId)
+          && incoming().updatedAt == request.time
+          && exists(/databases/$(database)/documents/coop_rooms/$(roomId))
+          && getCoopRoom(roomId).status == 'playing'
+          && isCoopSideOwner(roomId, incoming().side);
+
+        allow update: if isVerifiedUser()
+          && isValidId(roomId)
+          && isValidCoopTower(incoming(), slotId)
+          && incoming().slotId == existing().slotId
+          && incoming().side == existing().side
+          && incoming().col == existing().col
+          && incoming().row == existing().row
+          && incoming().type == existing().type
+          && incoming().ownerUid == existing().ownerUid
+          && incoming().updatedAt == request.time
+          && incoming().diff(existing()).affectedKeys().hasOnly(['level', 'branch', 'spent', 'updatedAt'])
+          && exists(/databases/$(database)/documents/coop_rooms/$(roomId))
+          && getCoopRoom(roomId).status == 'playing'
+          && isCoopSideOwner(roomId, existing().side);
+
+        allow delete: if isVerifiedUser()
+          && isValidId(roomId)
+          && existing().side in ['left', 'right']
+          && existing().ownerUid == request.auth.uid
+          && exists(/databases/$(database)/documents/coop_rooms/$(roomId))
+          && getCoopRoom(roomId).status == 'playing'
+          && isCoopSideOwner(roomId, existing().side);
+      }
+
+      // 6b. In-Room Co-op Real-Time Chat
+      match /messages/{messageId} {
+        allow get: if isSignedIn() && isValidId(roomId) && isValidId(messageId) && isCoopMember(roomId);
+        allow list: if isSignedIn() && resource.data.createdAt is timestamp;
+
+        allow create: if isVerifiedUser()
+          && isValidId(roomId)
+          && isValidId(messageId)
+          && isValidCoopChatMessage(incoming(), messageId)
+          && incoming().createdAt == request.time
+          && exists(/databases/$(database)/documents/coop_rooms/$(roomId))
+          && isCoopSideOwner(roomId, incoming().side);
+
+        allow update, delete: if false;
+      }
     }
   }
 }

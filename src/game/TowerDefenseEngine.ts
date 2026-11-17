@@ -3,6 +3,8 @@ import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import {
   buildWavePlan,
   CASTLE_GATE_Z,
+  COOP_STARTING_COINS,
+  COOP_WAVE_CLEAR_COIN_REWARD,
   ENEMY_ARCHETYPES,
   GRID_COLS_PER_SIDE,
   GRID_ROWS,
@@ -20,7 +22,11 @@ import { soundEngine } from '../lib/audio';
 import {
   BattleHudState,
   CameraPreset,
+  CoopRoomState,
+  CoopSide,
+  CoopTowerRecord,
   EnemyType,
+  GameMode,
   PlacedTowerSnapshot,
   SkillId,
   TowerBranch,
@@ -126,10 +132,44 @@ const _camTargetPos = new THREE.Vector3();
 const _camTargetLook = new THREE.Vector3();
 const _camCurrentLook = new THREE.Vector3(0, 1.0, -4.0);
 
+export interface StartBattleOptions {
+  gameMode?: GameMode;
+  coopSide?: CoopSide;
+  isHost?: boolean;
+  partnerName?: string;
+  roomCode?: string;
+  initialCoins?: number;
+}
+
 export interface EngineCallbacks {
   onHudUpdate: (hud: BattleHudState) => void;
   onWaveCleared: (wave: number, crystalsEarned: number, kills: number, bosses: number) => void;
   onGameOver: (waveReached: number, totalKills: number, bossesDefeated: number) => void;
+  onCoopBuildTower?: (
+    slotId: string,
+    side: CoopSide,
+    col: number,
+    row: number,
+    type: TowerType,
+    cost: number,
+  ) => void;
+  onCoopUpgradeTower?: (
+    slotId: string,
+    cost: number,
+    nextLevel: 2 | 3 | 4,
+    branch: TowerBranch,
+  ) => void;
+  onCoopSellTower?: (slotId: string) => void;
+  onCoopStartWave?: () => void;
+  onCoopWaveCleared?: (
+    clearedWave: number,
+    crystalsEarned: number,
+    kills: number,
+    bosses: number,
+  ) => void;
+  onCoopCastleDamaged?: (nextHp: number) => void;
+  onCoopTriggerSkill?: (skillId: SkillId) => void;
+  onCoopSpeedChange?: (mult: 1 | 2) => void;
 }
 
 export class TowerDefenseEngine {
@@ -151,6 +191,7 @@ export class TowerDefenseEngine {
   private gridTileBaseMat: THREE.MeshStandardMaterial;
   private gridTileHoverMat: THREE.MeshStandardMaterial;
   private gridTileOccupiedMat: THREE.MeshStandardMaterial;
+  private gridTileAllyMat: THREE.MeshStandardMaterial;
 
   private slots: GridSlot[] = [];
   private slotClickables: THREE.Mesh[] = [];
@@ -173,6 +214,14 @@ export class TowerDefenseEngine {
 
   // Game State
   private mode: 'lobby_preview' | 'battle' = 'lobby_preview';
+  private gameMode: GameMode = 'solo';
+  private coopSide: CoopSide | null = null;
+  private isCoopHost = false;
+  private partnerName: string | null = null;
+  private roomCode: string | null = null;
+  private lastSyncedSkillSeq = 0;
+  private coopWaveClearSentForWave = 0;
+
   private phase: 'prep' | 'wave_active' | 'game_over' = 'prep';
   private wave = 1;
   private coins = STARTING_BATTLE_COINS;
@@ -277,6 +326,12 @@ export class TowerDefenseEngine {
       color: 0x94a3b8,
       roughness: 0.8,
       metalness: 0.12,
+    });
+    this.gridTileAllyMat = new THREE.MeshStandardMaterial({
+      map: gridTex,
+      color: 0x334155,
+      roughness: 0.9,
+      metalness: 0.05,
     });
 
     this.setupLighting();
@@ -616,15 +671,26 @@ export class TowerDefenseEngine {
     }
   }
 
-  public startNewBattle(): void {
+  public startNewBattle(options: StartBattleOptions = {}): void {
     this.introActive = false;
     this.lobbySceneIndex = 0;
     this.lobbySceneElapsed = 0;
     this.clearBattleEntities();
+
     this.mode = 'battle';
+    this.gameMode = options.gameMode ?? 'solo';
+    this.coopSide = this.gameMode === 'coop' ? (options.coopSide ?? 'left') : null;
+    this.isCoopHost = this.gameMode === 'coop' ? Boolean(options.isHost) : false;
+    this.partnerName = this.gameMode === 'coop' ? (options.partnerName ?? null) : null;
+    this.roomCode = this.gameMode === 'coop' ? (options.roomCode ?? null) : null;
+    this.lastSyncedSkillSeq = 0;
+    this.coopWaveClearSentForWave = 0;
+
     this.phase = 'prep';
     this.wave = 1;
-    this.coins = STARTING_BATTLE_COINS;
+    this.coins =
+      options.initialCoins ??
+      (this.gameMode === 'coop' ? COOP_STARTING_COINS : STARTING_BATTLE_COINS);
     this.sessionCrystals = 0;
     this.castleHp = MAX_CASTLE_HP;
     this.totalKills = 0;
@@ -637,12 +703,25 @@ export class TowerDefenseEngine {
       [SkillId.METEOR_STRIKE]: 0,
       [SkillId.ABSOLUTE_ZERO]: 0,
     };
+
+    for (const slot of this.slots) {
+      slot.tileMesh.material = this.getDefaultSlotMaterial(slot);
+    }
+
     // Start elevated so the scene transition reveals a smooth swoop into the 2nd-person battlement
     this.camera.position.set(0, 25.5, 34.5);
     _camCurrentLook.set(0, 1.8, -8.5);
     this.camera.lookAt(_camCurrentLook);
 
-    this.showBanner('전투 준비! 격자 위에 타워를 배치한 뒤 웨이브를 시작하세요.', 4.0);
+    if (this.gameMode === 'coop' && this.coopSide) {
+      const sideLabel = this.coopSide === 'left' ? '왼쪽 진영' : '오른쪽 진영';
+      this.showBanner(
+        `실시간 협동 시작! 당신은 [${sideLabel}] 담당입니다. (공용 코인 · 웨이브당 +5)`,
+        5.0,
+      );
+    } else {
+      this.showBanner('전투 준비! 격자 위에 타워를 배치한 뒤 웨이브를 시작하세요.', 4.0);
+    }
     this.updateRangeIndicator();
     this.pushHudState(true);
   }
@@ -651,6 +730,11 @@ export class TowerDefenseEngine {
     this.introActive = false;
     this.lobbySceneIndex = 0;
     this.lobbySceneElapsed = 0;
+    this.gameMode = 'solo';
+    this.coopSide = null;
+    this.isCoopHost = false;
+    this.partnerName = null;
+    this.roomCode = null;
     this.clearBattleEntities();
     this.mode = 'lobby_preview';
     this.phase = 'prep';
@@ -662,25 +746,204 @@ export class TowerDefenseEngine {
     this.pushHudState(true);
   }
 
+  private getDefaultSlotMaterial(slot: GridSlot): THREE.MeshStandardMaterial {
+    if (slot.towerId) return this.gridTileOccupiedMat;
+    if (this.mode === 'battle' && this.gameMode === 'coop' && this.coopSide && slot.side !== this.coopSide) {
+      return this.gridTileAllyMat;
+    }
+    return this.gridTileBaseMat;
+  }
+
   public startNextWave(): void {
     if (this.mode !== 'battle' || this.phase !== 'prep') return;
-    const plan = buildWavePlan(this.wave);
+    if (this.gameMode === 'coop') {
+      this.callbacks.onCoopStartWave?.();
+      return;
+    }
+    this.beginWaveInternal(this.wave);
+  }
+
+  private beginWaveInternal(waveNum: number): void {
+    this.wave = waveNum;
+    const plan = buildWavePlan(waveNum, this.gameMode);
     this.pendingSpawns = [...plan.spawns];
     this.spawnTimer = 0.2;
     this.currentWaveCrystalReward = plan.crystalReward;
     this.phase = 'wave_active';
 
     if (plan.bossKind === 'big_boss') {
-      this.showBanner(`제 ${this.wave} 웨이브 — 빅 보스 [심연의 베히모스] 출현!`, 4.5);
+      this.showBanner(`제 ${waveNum} 웨이브 — 빅 보스 [심연의 베히모스] 출현!`, 4.5);
       soundEngine.playWaveStart(true);
     } else if (plan.bossKind === 'mini_boss') {
-      this.showBanner(`제 ${this.wave} 웨이브 — 중간보스 [철혈의 군주] 출현!`, 4.0);
+      this.showBanner(`제 ${waveNum} 웨이브 — 중간보스 [철혈의 군주] 출현!`, 4.0);
+      soundEngine.playWaveStart(true);
+    } else if (this.gameMode === 'coop' && waveNum === 4) {
+      this.showBanner('제 4 웨이브 — 협동전 카오스 강화 구간 진입! (1.5배~2배 난이도)', 4.2);
       soundEngine.playWaveStart(true);
     } else {
-      this.showBanner(`제 ${this.wave} 웨이브 시작!`, 2.2);
+      this.showBanner(`제 ${waveNum} 웨이브 시작!`, 2.2);
       soundEngine.playWaveStart(false);
     }
     this.pushHudState(true);
+  }
+
+  public syncCoopRoomState(room: CoopRoomState): void {
+    if (this.mode !== 'battle' || this.gameMode !== 'coop') return;
+
+    this.coins = room.coins;
+    this.speedMultiplier = room.speedMultiplier;
+
+    if (!this.isCoopHost) {
+      this.castleHp = room.castleHp;
+    }
+
+    if (room.lastSkillSeq > this.lastSyncedSkillSeq && room.lastSkillId) {
+      this.lastSyncedSkillSeq = room.lastSkillSeq;
+      if (this.phase === 'wave_active') {
+        this.executeLordSkillEffect(room.lastSkillId as SkillId, false);
+      }
+    }
+
+    if (room.phase === 'game_over' && this.phase !== 'game_over') {
+      this.phase = 'game_over';
+      this.pendingSpawns = [];
+      this.castleHp = 0;
+      this.showBanner('성문이 함락되었습니다! 협동 방어 종료', 6.0);
+      if (!this.isCoopHost) {
+        this.callbacks.onGameOver(this.wave, this.totalKills, this.bossesDefeated);
+      }
+      this.pushHudState(true);
+      return;
+    }
+
+    if (!this.isCoopHost && room.wave > this.wave && this.phase === 'wave_active') {
+      // Host cleared wave on authoritative timeline; finalize guest wave clear cleanly
+      const clearedWave = room.wave - 1;
+      for (const e of this.enemies) {
+        this.scene.remove(e.rig.root);
+        this.disposeObject3D(e.rig.root);
+      }
+      this.enemies = [];
+      this.enemyMap.clear();
+      this.pendingSpawns = [];
+
+      this.sessionCrystals += this.currentWaveCrystalReward;
+      this.callbacks.onWaveCleared(
+        clearedWave,
+        this.currentWaveCrystalReward,
+        this.totalKills,
+        this.bossesDefeated,
+      );
+      this.wave = room.wave;
+      this.phase = 'prep';
+      this.showBanner(
+        `제 ${clearedWave} 웨이브 협동 방어 성공! (+${COOP_WAVE_CLEAR_COIN_REWARD} 공용 코인 · +${this.currentWaveCrystalReward} 크리스탈)`,
+        3.2,
+      );
+    }
+
+    if (room.phase === 'wave_active' && this.phase === 'prep' && room.wave === this.wave) {
+      this.beginWaveInternal(room.wave);
+      return;
+    }
+
+    this.pushHudState(true);
+  }
+
+  public syncCoopTowers(remoteTowers: CoopTowerRecord[]): void {
+    if (this.mode !== 'battle' || this.gameMode !== 'coop') return;
+
+    const remoteBySlot = new Map<string, CoopTowerRecord>();
+    for (const r of remoteTowers) {
+      remoteBySlot.set(r.slotId, r);
+    }
+
+    // 1. Remove local towers absent from authoritative remote list
+    for (const [towerId, tower] of Array.from(this.towers.entries())) {
+      if (!remoteBySlot.has(tower.slot.id)) {
+        this.scene.remove(tower.rig.root);
+        this.disposeObject3D(tower.rig.root);
+        this.towers.delete(towerId);
+        tower.slot.towerId = null;
+        if (this.selectedSlot === tower.slot) {
+          this.selectedSlot = null;
+        }
+        tower.slot.tileMesh.material = this.getDefaultSlotMaterial(tower.slot);
+      }
+    }
+
+    // 2. Add or upgrade towers to match remote records
+    for (const remote of remoteTowers) {
+      const slot = this.slots.find((s) => s.id === remote.slotId);
+      if (!slot) continue;
+
+      if (!slot.towerId) {
+        this.spawnTowerOnSlot(slot, remote.type, false);
+        const created = slot.towerId ? this.towers.get(slot.towerId) : undefined;
+        if (created) {
+          created.totalSpent = remote.spent;
+          if (remote.level > 1) {
+            this.applyTowerLevelAndBranch(created, remote.level, remote.branch);
+          }
+          soundEngine.playBuildOrUpgrade();
+        }
+      } else {
+        const existingTower = this.towers.get(slot.towerId);
+        if (
+          existingTower &&
+          (existingTower.level !== remote.level || existingTower.branch !== remote.branch)
+        ) {
+          existingTower.totalSpent = remote.spent;
+          this.applyTowerLevelAndBranch(existingTower, remote.level, remote.branch);
+          soundEngine.playBuildOrUpgrade();
+        } else if (existingTower) {
+          existingTower.totalSpent = remote.spent;
+        }
+      }
+    }
+
+    this.updateRangeIndicator();
+    this.pushHudState(true);
+  }
+
+  private applyTowerLevelAndBranch(
+    tower: ActiveTower,
+    targetLevel: 1 | 2 | 3 | 4,
+    branch: TowerBranch,
+  ): void {
+    const def = TOWER_DEFINITIONS[tower.type];
+    if (targetLevel <= 3) {
+      const tier = def.tiers[targetLevel - 1];
+      if (!tier) return;
+      tower.level = tier.level;
+      tower.branch = TowerBranch.NONE;
+      tower.damage = tier.damage;
+      tower.interval = tier.interval;
+      tower.range = tier.range;
+      tower.splashRadius = tier.splashRadius;
+      tower.burnChance = tier.burnChance;
+      tower.burnDps = tier.burnDps;
+      tower.slowFactor = tier.slowFactor;
+      tower.chainCount = tier.chainCount;
+    } else {
+      const spec = def.branches.find((b) => b.id === branch) ?? def.branches[0];
+      tower.level = 4;
+      tower.branch = spec.id;
+      tower.damage = spec.damage;
+      tower.interval = spec.interval;
+      tower.range = spec.range;
+      tower.splashRadius = spec.splashRadius ?? tower.splashRadius;
+      tower.burnChance = spec.burnChance ?? tower.burnChance;
+      tower.burnDps = spec.burnDps ?? tower.burnDps;
+      tower.slowFactor = spec.slowFactor ?? tower.slowFactor;
+      tower.freezeChance = spec.freezeChance ?? 0;
+      tower.chainCount = spec.chainCount ?? tower.chainCount;
+      tower.bossMultiplier = spec.bossMultiplier ?? 1;
+      tower.critChance = spec.critChance ?? 0;
+      tower.multiShot = spec.multiShot ?? 1;
+      tower.armorMelt = Boolean(spec.armorMelt);
+    }
+    this.rebuildTowerRig(tower);
   }
 
   public setSelectedBuildType(type: TowerType): void {
@@ -690,6 +953,10 @@ export class TowerDefenseEngine {
   }
 
   public setSpeedMultiplier(mult: 1 | 2): void {
+    if (this.gameMode === 'coop') {
+      this.callbacks.onCoopSpeedChange?.(mult);
+      return;
+    }
     this.speedMultiplier = mult;
     this.pushHudState(true);
   }
@@ -711,47 +978,47 @@ export class TowerDefenseEngine {
     const tower = this.towers.get(this.selectedSlot.towerId);
     if (!tower) return;
 
+    if (this.gameMode === 'coop' && this.coopSide && tower.slot.side !== this.coopSide) {
+      this.showBanner('파트너의 타워는 강화할 수 없습니다.', 2.0);
+      this.pushHudState(true);
+      return;
+    }
+
     const def = TOWER_DEFINITIONS[tower.type];
 
     if (tower.level < 3) {
-      const nextTier = tower.level === 1 ? def.tiers[1] : def.tiers[2];
+      const nextLevel: 2 | 3 = tower.level === 1 ? 2 : 3;
+      const nextTier = def.tiers[nextLevel - 1];
       if (!nextTier || this.coins < nextTier.upgradeCost) return;
+
+      if (this.gameMode === 'coop') {
+        this.callbacks.onCoopUpgradeTower?.(
+          tower.slot.id,
+          nextTier.upgradeCost,
+          nextLevel,
+          TowerBranch.NONE,
+        );
+        return;
+      }
+
       this.coins -= nextTier.upgradeCost;
       tower.totalSpent += nextTier.upgradeCost;
-      tower.level = nextTier.level;
-      tower.damage = nextTier.damage;
-      tower.interval = nextTier.interval;
-      tower.range = nextTier.range;
-      tower.splashRadius = nextTier.splashRadius;
-      tower.burnChance = nextTier.burnChance;
-      tower.burnDps = nextTier.burnDps;
-      tower.slowFactor = nextTier.slowFactor;
-      tower.chainCount = nextTier.chainCount;
-      this.rebuildTowerRig(tower);
+      this.applyTowerLevelAndBranch(tower, nextTier.level, TowerBranch.NONE);
       this.updateRangeIndicator();
       soundEngine.playBuildOrUpgrade();
       this.pushHudState(true);
     } else if (tower.level === 3 && branchChoice) {
       const spec = def.branches.find((b) => b.id === branchChoice);
       if (!spec || this.coins < spec.cost) return;
+
+      if (this.gameMode === 'coop') {
+        this.callbacks.onCoopUpgradeTower?.(tower.slot.id, spec.cost, 4, spec.id);
+        return;
+      }
+
       this.coins -= spec.cost;
       tower.totalSpent += spec.cost;
-      tower.level = 4;
-      tower.branch = spec.id;
-      tower.damage = spec.damage;
-      tower.interval = spec.interval;
-      tower.range = spec.range;
-      tower.splashRadius = spec.splashRadius ?? tower.splashRadius;
-      tower.burnChance = spec.burnChance ?? tower.burnChance;
-      tower.burnDps = spec.burnDps ?? tower.burnDps;
-      tower.slowFactor = spec.slowFactor ?? tower.slowFactor;
-      tower.freezeChance = spec.freezeChance ?? 0;
-      tower.chainCount = spec.chainCount ?? tower.chainCount;
-      tower.bossMultiplier = spec.bossMultiplier ?? 1;
-      tower.critChance = spec.critChance ?? 0;
-      tower.multiShot = spec.multiShot ?? 1;
-      tower.armorMelt = Boolean(spec.armorMelt);
-      this.rebuildTowerRig(tower);
+      this.applyTowerLevelAndBranch(tower, 4, spec.id);
       this.updateRangeIndicator();
       soundEngine.playBuildOrUpgrade();
       this.pushHudState(true);
@@ -763,13 +1030,24 @@ export class TowerDefenseEngine {
     const tower = this.towers.get(this.selectedSlot.towerId);
     if (!tower) return;
 
+    if (this.gameMode === 'coop' && this.coopSide && tower.slot.side !== this.coopSide) {
+      this.showBanner('파트너의 타워는 회수할 수 없습니다.', 2.0);
+      this.pushHudState(true);
+      return;
+    }
+
+    if (this.gameMode === 'coop') {
+      this.callbacks.onCoopSellTower?.(tower.slot.id);
+      return;
+    }
+
     const refund = Math.max(1, Math.floor(tower.totalSpent * 0.7));
     this.coins += refund;
     this.scene.remove(tower.rig.root);
     this.disposeObject3D(tower.rig.root);
     this.towers.delete(tower.id);
     this.selectedSlot.towerId = null;
-    this.selectedSlot.tileMesh.material = this.gridTileBaseMat;
+    this.selectedSlot.tileMesh.material = this.getDefaultSlotMaterial(this.selectedSlot);
     this.selectedSlot = null;
     this.updateRangeIndicator();
     soundEngine.playBuildOrUpgrade();
@@ -780,11 +1058,23 @@ export class TowerDefenseEngine {
     if (this.mode !== 'battle' || this.phase !== 'wave_active') return;
     if (this.skillCooldowns[skillId] > 0) return;
 
+    if (this.gameMode === 'coop') {
+      this.skillCooldowns[skillId] =
+        skillId === SkillId.ARROW_RAIN ? 18 : skillId === SkillId.METEOR_STRIKE ? 26 : 24;
+      this.callbacks.onCoopTriggerSkill?.(skillId);
+      this.pushHudState(true);
+      return;
+    }
+
+    this.executeLordSkillEffect(skillId, true);
+    this.pushHudState(true);
+  }
+
+  private executeLordSkillEffect(skillId: SkillId, setCooldown: boolean): void {
     soundEngine.playLordSkill();
 
     if (skillId === SkillId.ARROW_RAIN) {
-      this.skillCooldowns[skillId] = 18;
-      // Pick center of enemy cluster or lane mid
+      if (setCooldown) this.skillCooldowns[skillId] = 18;
       const targetZ = this.enemies.length > 0 ? this.enemies[0].z : 2;
       this.spawnArrowRainEffect(0, targetZ);
       for (const e of this.enemies) {
@@ -794,7 +1084,7 @@ export class TowerDefenseEngine {
       }
       this.showBanner('성주 특수공격 발동: 성벽 화살 비!', 2.2);
     } else if (skillId === SkillId.METEOR_STRIKE) {
-      this.skillCooldowns[skillId] = 26;
+      if (setCooldown) this.skillCooldowns[skillId] = 26;
       const targetEnemy = this.enemies[0];
       const targetX = targetEnemy ? targetEnemy.x : 0;
       const targetZ = targetEnemy ? targetEnemy.z : -2;
@@ -809,7 +1099,7 @@ export class TowerDefenseEngine {
       }
       this.showBanner('성주 특수공격 발동: 천벌의 운석!', 2.5);
     } else if (skillId === SkillId.ABSOLUTE_ZERO) {
-      this.skillCooldowns[skillId] = 24;
+      if (setCooldown) this.skillCooldowns[skillId] = 24;
       this.spawnFrostWaveEffect();
       for (const e of this.enemies) {
         this.damageEnemy(e, 85);
@@ -819,8 +1109,6 @@ export class TowerDefenseEngine {
       }
       this.showBanner('성주 특수공격 발동: 절대 영도 빙결!', 2.5);
     }
-
-    this.pushHudState(true);
   }
 
   // ===========================================================================
@@ -1300,20 +1588,26 @@ export class TowerDefenseEngine {
 
       // Reached Castle Gate
       if (e.z >= CASTLE_GATE_Z) {
-        this.castleHp = Math.max(0, this.castleHp - e.gateDamage);
         this.spawnImpactRing(e.x, CASTLE_GATE_Z, 1.8, 0xef4444);
         this.scene.remove(e.rig.root);
         this.disposeObject3D(e.rig.root);
         this.enemyMap.delete(e.id);
         this.enemies.splice(i, 1);
 
-        if (this.castleHp <= 0) {
-          this.phase = 'game_over';
-          this.pendingSpawns = [];
-          this.showBanner('성문이 함락되었습니다! 방어 종료', 6.0);
-          this.callbacks.onGameOver(this.wave, this.totalKills, this.bossesDefeated);
-          this.pushHudState(true);
-          return;
+        if (this.gameMode === 'solo' || this.isCoopHost) {
+          this.castleHp = Math.max(0, this.castleHp - e.gateDamage);
+          if (this.gameMode === 'coop') {
+            this.callbacks.onCoopCastleDamaged?.(this.castleHp);
+          }
+
+          if (this.castleHp <= 0) {
+            this.phase = 'game_over';
+            this.pendingSpawns = [];
+            this.showBanner('성문이 함락되었습니다! 방어 종료', 6.0);
+            this.callbacks.onGameOver(this.wave, this.totalKills, this.bossesDefeated);
+            this.pushHudState(true);
+            return;
+          }
         }
       }
     }
@@ -1462,23 +1756,43 @@ export class TowerDefenseEngine {
           this.pendingSpawns.length === 0 &&
           this.enemies.length === 0
         ) {
-          // Wave Cleared! Award +3 Coins & Crystals
-          const clearedWave = this.wave;
-          this.coins += WAVE_CLEAR_COIN_REWARD;
-          this.sessionCrystals += this.currentWaveCrystalReward;
-          this.callbacks.onWaveCleared(
-            clearedWave,
-            this.currentWaveCrystalReward,
-            this.totalKills,
-            this.bossesDefeated,
-          );
-          this.wave += 1;
-          this.phase = 'prep';
-          this.showBanner(
-            `제 ${clearedWave} 웨이브 방어 성공! (+${WAVE_CLEAR_COIN_REWARD} 코인 · +${this.currentWaveCrystalReward} 크리스탈)`,
-            3.2,
-          );
-          this.pushHudState(true);
+          if (this.gameMode === 'solo') {
+            // Solo Wave Cleared! Award +3 Coins & Crystals
+            const clearedWave = this.wave;
+            this.coins += WAVE_CLEAR_COIN_REWARD;
+            this.sessionCrystals += this.currentWaveCrystalReward;
+            this.callbacks.onWaveCleared(
+              clearedWave,
+              this.currentWaveCrystalReward,
+              this.totalKills,
+              this.bossesDefeated,
+            );
+            this.wave += 1;
+            this.phase = 'prep';
+            this.showBanner(
+              `제 ${clearedWave} 웨이브 방어 성공! (+${WAVE_CLEAR_COIN_REWARD} 코인 · +${this.currentWaveCrystalReward} 크리스탈)`,
+              3.2,
+            );
+            this.pushHudState(true);
+          } else if (this.isCoopHost && this.coopWaveClearSentForWave < this.wave) {
+            // Host is authoritative for advancing co-op waves and awarding +5 shared coins
+            const clearedWave = this.wave;
+            this.coopWaveClearSentForWave = clearedWave;
+            this.sessionCrystals += this.currentWaveCrystalReward;
+            this.callbacks.onCoopWaveCleared?.(
+              clearedWave,
+              this.currentWaveCrystalReward,
+              this.totalKills,
+              this.bossesDefeated,
+            );
+            this.wave += 1;
+            this.phase = 'prep';
+            this.showBanner(
+              `제 ${clearedWave} 웨이브 협동 방어 성공! (+${COOP_WAVE_CLEAR_COIN_REWARD} 공용 코인 · +${this.currentWaveCrystalReward} 크리스탈)`,
+              3.2,
+            );
+            this.pushHudState(true);
+          }
         }
       }
     } else {
@@ -1666,17 +1980,17 @@ export class TowerDefenseEngine {
     if (nextHovered === this.hoveredSlot) return;
 
     if (this.hoveredSlot && this.hoveredSlot !== this.selectedSlot) {
-      this.hoveredSlot.tileMesh.material = this.hoveredSlot.towerId
-        ? this.gridTileOccupiedMat
-        : this.gridTileBaseMat;
+      this.hoveredSlot.tileMesh.material = this.getDefaultSlotMaterial(this.hoveredSlot);
     }
 
     this.hoveredSlot = nextHovered;
     if (nextHovered) {
-      if (nextHovered !== this.selectedSlot) {
+      const canPlaceHere =
+        this.gameMode === 'solo' || !this.coopSide || nextHovered.side === this.coopSide || Boolean(nextHovered.towerId);
+      if (nextHovered !== this.selectedSlot && canPlaceHere) {
         nextHovered.tileMesh.material = this.gridTileHoverMat;
       }
-      this.renderer.domElement.style.cursor = 'pointer';
+      this.renderer.domElement.style.cursor = canPlaceHere ? 'pointer' : 'not-allowed';
     } else {
       this.renderer.domElement.style.cursor = 'default';
     }
@@ -1703,12 +2017,29 @@ export class TowerDefenseEngine {
     if (clickedSlot.towerId) {
       // Select existing tower for inspection/upgrades
       this.selectedSlot = clickedSlot;
+    } else if (this.gameMode === 'coop' && this.coopSide && clickedSlot.side !== this.coopSide) {
+      const mySideKr = this.coopSide === 'left' ? '왼쪽' : '오른쪽';
+      const allySideKr = this.coopSide === 'left' ? '오른쪽' : '왼쪽';
+      this.showBanner(`파트너 진영(${allySideKr})입니다. 내 진영(${mySideKr})에 타워를 배치하세요!`, 2.2);
+      this.selectedSlot = null;
     } else {
       // Build selected tower type on empty grid tile
       const def = TOWER_DEFINITIONS[this.selectedBuildType];
       if (this.coins >= def.buildCost) {
-        this.spawnTowerOnSlot(clickedSlot, this.selectedBuildType, true);
-        this.selectedSlot = clickedSlot;
+        if (this.gameMode === 'coop') {
+          this.callbacks.onCoopBuildTower?.(
+            clickedSlot.id,
+            clickedSlot.side,
+            clickedSlot.col,
+            clickedSlot.row,
+            this.selectedBuildType,
+            def.buildCost,
+          );
+          this.selectedSlot = clickedSlot;
+        } else {
+          this.spawnTowerOnSlot(clickedSlot, this.selectedBuildType, true);
+          this.selectedSlot = clickedSlot;
+        }
       } else {
         this.showBanner(`코인이 부족합니다! (${def.name}: ${def.buildCost} 코인 필요)`, 2.0);
         this.selectedSlot = null;
@@ -1764,6 +2095,10 @@ export class TowerDefenseEngine {
     );
 
     this.callbacks.onHudUpdate({
+      gameMode: this.gameMode,
+      coopSide: this.coopSide,
+      partnerName: this.partnerName,
+      roomCode: this.roomCode,
       phase: this.phase,
       wave: this.wave,
       coins: this.coins,

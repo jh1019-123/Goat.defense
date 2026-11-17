@@ -11,6 +11,7 @@ import {
   Play,
   Sparkles,
   Trophy,
+  Users,
   X,
 } from 'lucide-react';
 import {
@@ -20,11 +21,14 @@ import {
 } from '../data/gameConfig';
 import {
   AuthErrorDiagnostic,
+  CoopRoomState,
   LeaderboardRecord,
+  LobbyChatMessage,
   PlayerSaveData,
   SkillId,
   TowerType,
 } from '../types/game';
+import { ChatPanel } from './ChatPanel';
 
 export type LobbyTab = 'home' | 'shop' | 'leaderboard';
 
@@ -36,7 +40,19 @@ interface LobbyOverlayProps {
   leaderboard: LeaderboardRecord[];
   leaderboardError: string | null;
   supabaseSqlText: string;
+  lobbyMessages: LobbyChatMessage[];
+  lobbyChatError: string | null;
+  openCoopRooms: CoopRoomState[];
+  waitingCoopRoom: CoopRoomState | null;
+  coopActionLoading: boolean;
+  coopError: string | null;
   onStartBattle: () => void;
+  onCreateCoopRoom: () => Promise<void>;
+  onJoinCoopRoomById: (roomId: string) => Promise<void>;
+  onJoinCoopRoomByCode: (code: string) => Promise<void>;
+  onCancelCoopRoom: () => Promise<void>;
+  onClearCoopError: () => void;
+  onSendLobbyChat: (text: string) => Promise<void>;
   onSignIn: () => void;
   onSignInRedirect: () => void;
   onDismissAuthError: () => void;
@@ -55,7 +71,19 @@ export const LobbyOverlay: React.FC<LobbyOverlayProps> = ({
   leaderboard,
   leaderboardError,
   supabaseSqlText,
+  lobbyMessages,
+  lobbyChatError,
+  openCoopRooms,
+  waitingCoopRoom,
+  coopActionLoading,
+  coopError,
   onStartBattle,
+  onCreateCoopRoom,
+  onJoinCoopRoomById,
+  onJoinCoopRoomByCode,
+  onCancelCoopRoom,
+  onClearCoopError,
+  onSendLobbyChat,
   onSignIn,
   onSignInRedirect,
   onDismissAuthError,
@@ -67,6 +95,9 @@ export const LobbyOverlay: React.FC<LobbyOverlayProps> = ({
 }) => {
   const [activeTab, setActiveTab] = useState<LobbyTab>('home');
   const [showSqlModal, setShowSqlModal] = useState(false);
+  const [showCoopModal, setShowCoopModal] = useState(false);
+  const [roomCodeInput, setRoomCodeInput] = useState('');
+  const [copiedRoomCode, setCopiedRoomCode] = useState(false);
   const [copiedSql, setCopiedSql] = useState(false);
   const [copiedHost, setCopiedHost] = useState(false);
   const [editingName, setEditingName] = useState(false);
@@ -97,6 +128,21 @@ export const LobbyOverlay: React.FC<LobbyOverlayProps> = ({
     const t = setTimeout(() => setCopiedHost(false), 1800);
     return () => clearTimeout(t);
   }, [copiedHost]);
+
+  useEffect(() => {
+    if (!copiedRoomCode) return;
+    const t = setTimeout(() => setCopiedRoomCode(false), 1800);
+    return () => clearTimeout(t);
+  }, [copiedRoomCode]);
+
+  const handleCopyRoomCode = async (code: string) => {
+    try {
+      await navigator.clipboard.writeText(code);
+      setCopiedRoomCode(true);
+    } catch {
+      // Fallback ignored
+    }
+  };
 
   const handleCopySql = async () => {
     try {
@@ -273,10 +319,21 @@ export const LobbyOverlay: React.FC<LobbyOverlayProps> = ({
                 <button
                   type="button"
                   onClick={onStartBattle}
-                  className="flex items-center gap-2 rounded-xl bg-amber-500 px-6 py-3 text-sm font-bold text-slate-950 hover:bg-amber-400 transition-colors shadow-lg whitespace-nowrap shrink-0"
+                  className="flex items-center gap-2 rounded-xl bg-amber-500 px-5 py-3 text-sm font-bold text-slate-950 hover:bg-amber-400 transition-colors shadow-lg whitespace-nowrap shrink-0"
                 >
                   <Play className="h-4 w-4 fill-current" />
                   <span>전투 시작</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    onClearCoopError();
+                    setShowCoopModal(true);
+                  }}
+                  className="flex items-center gap-2 rounded-xl border border-cyan-400/60 bg-cyan-500/15 px-4 py-3 text-sm font-bold text-cyan-200 hover:bg-cyan-500/25 transition-colors shadow-lg whitespace-nowrap shrink-0"
+                >
+                  <Users className="h-4 w-4 text-cyan-300" />
+                  <span>실시간 협동 (2인)</span>
                 </button>
                 <button
                   type="button"
@@ -284,13 +341,6 @@ export const LobbyOverlay: React.FC<LobbyOverlayProps> = ({
                   className="rounded-xl border border-slate-700 bg-slate-900/90 px-4 py-3 text-sm font-semibold text-slate-200 hover:border-cyan-500/60 hover:text-cyan-300 transition-colors whitespace-nowrap shrink-0"
                 >
                   상점 열기
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setActiveTab('leaderboard')}
-                  className="rounded-xl border border-slate-700 bg-slate-900/90 px-4 py-3 text-sm font-semibold text-slate-200 hover:border-amber-500/60 hover:text-amber-300 transition-colors whitespace-nowrap shrink-0"
-                >
-                  리더보드
                 </button>
               </div>
             </section>
@@ -688,6 +738,220 @@ export const LobbyOverlay: React.FC<LobbyOverlayProps> = ({
                 확인
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Docked Lobby Global Real-Time Chat */}
+      <div className="pointer-events-none fixed bottom-4 right-4 z-20">
+        <ChatPanel
+          variant="lobby"
+          title="로비 실시간 채팅"
+          messages={lobbyMessages}
+          currentUid={saveData.uid}
+          isSignedIn={isSignedIn}
+          errorText={lobbyChatError}
+          defaultOpen
+          onSendMessage={onSendLobbyChat}
+          onRequireSignIn={onSignIn}
+        />
+      </div>
+
+      {/* Real-Time 2-Player Co-op Matchmaking Modal */}
+      {showCoopModal && (
+        <div className="pointer-events-auto fixed inset-0 z-40 flex items-center justify-center bg-slate-950/80 p-4">
+          <div className="w-full max-w-xl rounded-2xl border border-cyan-500/40 bg-[#0b1222] p-6 shadow-2xl">
+            <div className="flex items-start justify-between gap-3 border-b border-slate-800 pb-4">
+              <div>
+                <h3 className="flex items-center gap-2 text-lg font-bold text-white">
+                  <Users className="h-5 w-5 text-cyan-400" />
+                  <span>실시간 협동 모드 (2인)</span>
+                </h3>
+                <p className="mt-1 text-xs text-slate-300">
+                  호스트는 <span className="font-bold text-sky-300">왼쪽 진영</span>, 참가자는{' '}
+                  <span className="font-bold text-rose-300">오른쪽 진영</span>을 맡아 함께 방어합니다.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  if (waitingCoopRoom) {
+                    void onCancelCoopRoom();
+                  }
+                  setShowCoopModal(false);
+                }}
+                className="rounded-lg border border-slate-700 p-1.5 text-slate-400 hover:text-white"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <div className="mt-4 grid grid-cols-3 gap-2 rounded-xl border border-slate-800 bg-slate-900/70 p-3 text-center text-xs">
+              <div>
+                <div className="text-slate-400">진영 분담</div>
+                <div className="mt-0.5 font-bold text-slate-100">좌 · 우 각 1명</div>
+              </div>
+              <div>
+                <div className="text-slate-400">웨이브 코인</div>
+                <div className="mt-0.5 font-bold text-amber-300">공용 +5 코인</div>
+              </div>
+              <div>
+                <div className="text-slate-400">난이도</div>
+                <div className="mt-0.5 font-bold text-rose-300">4W+ 1.5~2배</div>
+              </div>
+            </div>
+
+            {coopError && (
+              <div className="mt-3 rounded-xl border border-rose-500/40 bg-rose-500/10 px-3.5 py-2.5 text-xs text-rose-200">
+                {coopError}
+              </div>
+            )}
+
+            {!isSignedIn ? (
+              <div className="mt-5 flex flex-col items-center rounded-xl border border-amber-500/30 bg-amber-500/10 p-5 text-center">
+                <p className="text-xs text-amber-100">
+                  실시간 협동 모드와 공용 코인 동기화를 위해 Google 로그인이 필요합니다.
+                </p>
+                <button
+                  type="button"
+                  disabled={authLoading}
+                  onClick={onSignIn}
+                  className="mt-3 flex items-center gap-2 rounded-xl bg-amber-500 px-5 py-2.5 text-xs font-bold text-slate-950 hover:bg-amber-400"
+                >
+                  <LogIn className="h-4 w-4" />
+                  <span>{authLoading ? '연결 중...' : 'Google 로그인하기'}</span>
+                </button>
+              </div>
+            ) : waitingCoopRoom ? (
+              <div className="mt-5 space-y-4">
+                <div className="rounded-xl border border-cyan-500/40 bg-slate-900/90 p-5 text-center">
+                  <div className="text-xs font-medium text-cyan-300">
+                    파트너가 입장하면 2초 로딩 후 자동으로 전장이 시작됩니다!
+                  </div>
+                  <div className="mt-3 flex items-center justify-center gap-3">
+                    <span className="font-mono-num text-3xl font-extrabold tracking-[0.22em] text-amber-300">
+                      {waitingCoopRoom.roomCode}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => void handleCopyRoomCode(waitingCoopRoom.roomCode)}
+                      className="flex items-center gap-1 rounded-lg border border-slate-700 bg-slate-800 px-3 py-1.5 text-xs font-semibold text-slate-200 hover:border-amber-400"
+                    >
+                      {copiedRoomCode ? <Check className="h-3.5 w-3.5 text-emerald-400" /> : <Copy className="h-3.5 w-3.5" />}
+                      <span>{copiedRoomCode ? '복사됨' : '코드 복사'}</span>
+                    </button>
+                  </div>
+                  <div className="mt-4 grid grid-cols-2 gap-3 text-xs">
+                    <div className="rounded-lg border border-sky-500/40 bg-sky-500/10 p-2.5">
+                      <div className="text-sky-300 font-bold">왼쪽 진영 (호스트)</div>
+                      <div className="mt-1 text-white truncate">{waitingCoopRoom.hostName}</div>
+                    </div>
+                    <div className="rounded-lg border border-slate-700 bg-slate-950/80 p-2.5">
+                      <div className="text-rose-300 font-bold">오른쪽 진영 (파트너)</div>
+                      <div className="mt-1 text-slate-400">대기 중...</div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex justify-end">
+                  <button
+                    type="button"
+                    onClick={() => void onCancelCoopRoom()}
+                    className="rounded-xl border border-rose-500/40 bg-rose-500/10 px-4 py-2 text-xs font-semibold text-rose-300 hover:bg-rose-500/20"
+                  >
+                    대기 방 취소
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="mt-5 space-y-4">
+                {/* Create or Join by Code */}
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <button
+                    type="button"
+                    disabled={coopActionLoading}
+                    onClick={() => void onCreateCoopRoom()}
+                    className="flex flex-col items-start justify-center rounded-xl border border-cyan-400/50 bg-cyan-500/15 p-4 text-left hover:bg-cyan-500/25 disabled:opacity-50 transition-colors"
+                  >
+                    <span className="text-sm font-bold text-cyan-200">새 협동 방 만들기</span>
+                    <span className="mt-1 text-[11px] text-slate-300">
+                      왼쪽 진영을 맡고 초대 코드를 생성합니다
+                    </span>
+                  </button>
+
+                  <form
+                    onSubmit={(e) => {
+                      e.preventDefault();
+                      void onJoinCoopRoomByCode(roomCodeInput);
+                    }}
+                    className="flex flex-col justify-between rounded-xl border border-slate-700 bg-slate-900/80 p-3.5"
+                  >
+                    <span className="text-xs font-bold text-slate-200">방 코드로 바로 입장 (오른쪽)</span>
+                    <div className="mt-2 flex items-center gap-2">
+                      <input
+                        type="text"
+                        value={roomCodeInput}
+                        maxLength={6}
+                        onChange={(e) => setRoomCodeInput(e.target.value.toUpperCase())}
+                        placeholder="6자리 코드"
+                        className="min-w-0 flex-1 rounded-lg border border-slate-700 bg-slate-950 px-2.5 py-1.5 font-mono text-xs uppercase text-white outline-none focus:border-amber-400"
+                      />
+                      <button
+                        type="submit"
+                        disabled={coopActionLoading || roomCodeInput.trim().length < 6}
+                        className="rounded-lg bg-amber-500 px-3 py-1.5 text-xs font-bold text-slate-950 hover:bg-amber-400 disabled:opacity-40"
+                      >
+                        입장
+                      </button>
+                    </div>
+                  </form>
+                </div>
+
+                {/* Open Waiting Rooms List */}
+                <div>
+                  <div className="text-xs font-semibold text-slate-400">
+                    참가 가능한 대기 방 ({openCoopRooms.length})
+                  </div>
+                  <div className="mt-2 max-h-44 space-y-2 overflow-y-auto">
+                    {openCoopRooms.length === 0 ? (
+                      <div className="rounded-xl border border-slate-800 bg-slate-900/50 py-6 text-center text-xs text-slate-500">
+                        현재 대기 중인 방이 없습니다. 새 방을 만들어보세요!
+                      </div>
+                    ) : (
+                      openCoopRooms.map((room) => {
+                        const isMine = room.hostUid === saveData.uid;
+                        return (
+                          <div
+                            key={room.roomId}
+                            className="flex items-center justify-between gap-3 rounded-xl border border-slate-800 bg-slate-900/80 px-4 py-2.5"
+                          >
+                            <div>
+                              <div className="flex items-center gap-2 text-xs font-bold text-white">
+                                <span>{room.hostName}님의 방</span>
+                                <span className="font-mono text-[11px] text-amber-300">
+                                  #{room.roomCode}
+                                </span>
+                              </div>
+                              <div className="mt-0.5 text-[11px] text-slate-400">
+                                호스트: 왼쪽 진영 · 참가자: 오른쪽 진영
+                              </div>
+                            </div>
+                            <button
+                              type="button"
+                              disabled={coopActionLoading || isMine}
+                              onClick={() => void onJoinCoopRoomById(room.roomId)}
+                              className="rounded-lg bg-cyan-500 px-3.5 py-1.5 text-xs font-bold text-slate-950 hover:bg-cyan-400 disabled:opacity-40"
+                            >
+                              {isMine ? '내 방' : '참가'}
+                            </button>
+                          </div>
+                        );
+                      })
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}

@@ -118,7 +118,15 @@ export interface PlacedTowerSnapshot {
   sellRefund: number;
 }
 
+export type GameMode = 'solo' | 'coop';
+
+export type CoopSide = 'left' | 'right';
+
 export interface BattleHudState {
+  gameMode: GameMode;
+  coopSide: CoopSide | null;
+  partnerName: string | null;
+  roomCode: string | null;
   phase: 'prep' | 'wave_active' | 'game_over';
   wave: number;
   coins: number;
@@ -169,3 +177,52 @@ export interface AuthErrorDiagnostic {
   projectId: string;
   canTryRedirect: boolean;
 }
+
+export interface LobbyChatMessage {
+  id: string;
+  uid: string;
+  displayName: string;
+  text: string;
+  createdAtMs: number;
+}
+
+export interface CoopChatMessage {
+  id: string;
+  uid: string;
+  displayName: string;
+  side: CoopSide;
+  text: string;
+  createdAtMs: number;
+}
+
+export interface CoopRoomState {
+  roomId: string;
+  roomCode: string;
+  hostUid: string;
+  hostName: string;
+  guestUid: string;
+  guestName: string;
+  status: 'waiting' | 'playing' | 'ended';
+  wave: number;
+  phase: 'prep' | 'wave_active' | 'game_over';
+  coins: number;
+  castleHp: number;
+  speedMultiplier: 1 | 2;
+  lastSkillSeq: number;
+  lastSkillId: string;
+  lastSkillBy: string;
+  updatedAtMs: number;
+}
+
+export interface CoopTowerRecord {
+  slotId: string;
+  side: CoopSide;
+  col: number;
+  row: number;
+  type: TowerType;
+  level: 1 | 2 | 3 | 4;
+  branch: TowerBranch;
+  ownerUid: string;
+  spent: number;
+}
+

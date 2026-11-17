@@ -1,5 +1,6 @@
 import {
   EnemyType,
+  GameMode,
   LordSkillDefinition,
   SkillId,
   TowerBranch,
@@ -10,6 +11,8 @@ import {
 
 export const STARTING_BATTLE_COINS = 7;
 export const WAVE_CLEAR_COIN_REWARD = 3;
+export const COOP_STARTING_COINS = 10;
+export const COOP_WAVE_CLEAR_COIN_REWARD = 5;
 export const MAX_CASTLE_HP = 100;
 
 export const GRID_ROWS = 7;
@@ -475,9 +478,9 @@ export const ENEMY_ARCHETYPES: Record<EnemyType, EnemyArchetype> = {
   [EnemyType.MINI_BOSS]: {
     type: EnemyType.MINI_BOSS,
     name: '철혈의 군주 (중간보스)',
-    baseHp: 560,
-    baseSpeed: 1.65,
-    gateDamage: 28,
+    baseHp: 270,
+    baseSpeed: 1.38,
+    gateDamage: 22,
     scale: 1.65,
     color: 0x7f1d1d,
     accentColor: 0xf59e0b,
@@ -485,9 +488,9 @@ export const ENEMY_ARCHETYPES: Record<EnemyType, EnemyArchetype> = {
   [EnemyType.BIG_BOSS]: {
     type: EnemyType.BIG_BOSS,
     name: '심연의 베히모스 (빅보스)',
-    baseHp: 1450,
-    baseSpeed: 1.32,
-    gateDamage: 50,
+    baseHp: 580,
+    baseSpeed: 1.15,
+    gateDamage: 35,
     scale: 2.25,
     color: 0x1e1b4b,
     accentColor: 0xf43f5e,
@@ -510,7 +513,7 @@ export interface WavePlan {
   spawns: WaveSpawnItem[];
 }
 
-export function buildWavePlan(wave: number): WavePlan {
+export function buildWavePlan(wave: number, mode: GameMode = 'solo'): WavePlan {
   // Big Boss every 10 waves (10, 20, 30...), Mini-Boss every 5 waves excluding 10s (5, 15, 25...)
   const isBigBoss = wave % 10 === 0;
   const isMiniBoss = !isBigBoss && wave % 5 === 0;
@@ -521,10 +524,35 @@ export function buildWavePlan(wave: number): WavePlan {
       : 'none';
 
   // Progressive difficulty scaling for unlimited waves
-  const hpMultiplier = 1 + (wave - 1) * 0.25 + Math.pow(wave - 1, 1.32) * 0.045;
-  const speedMultiplier = 1 + Math.min(1.5, (wave - 1) * 0.028);
+  const baseHpMultiplier = 1 + (wave - 1) * 0.25 + Math.pow(wave - 1, 1.32) * 0.045;
+  const baseSpeedMultiplier = 1 + Math.min(1.5, (wave - 1) * 0.028);
 
-  const count = Math.min(34, 6 + Math.floor(wave * 1.45));
+  // Co-op difficulty: accessible on Waves 1-3, then ramps 1.5x -> 2.0x harder after Wave 3
+  let coopHpScale = 1;
+  let coopSpeedScale = 1;
+  let coopCountScale = 1;
+  let coopCadenceScale = 1;
+
+  if (mode === 'coop') {
+    if (wave <= 3) {
+      coopHpScale = 1 + (wave - 1) * 0.06; // 1.00 -> 1.06 -> 1.12
+      coopSpeedScale = 1.0;
+      coopCountScale = 1.12;
+      coopCadenceScale = 0.96;
+    } else {
+      const ramp = Math.min(1, (wave - 4) / 4); // Wave 4 = 0, Wave 8+ = 1
+      coopHpScale = 1.5 + ramp * 0.5; // 1.50x at Wave 4 -> 2.00x at Wave 8+
+      coopSpeedScale = 1.06 + ramp * 0.08;
+      coopCountScale = 1.25 + ramp * 0.25;
+      coopCadenceScale = 0.88 - ramp * 0.08;
+    }
+  }
+
+  const hpMultiplier = baseHpMultiplier * coopHpScale;
+  const speedMultiplier = baseSpeedMultiplier * coopSpeedScale;
+
+  const baseCount = Math.min(34, 6 + Math.floor(wave * 1.45));
+  const count = Math.min(54, Math.round(baseCount * coopCountScale));
   const spawns: WaveSpawnItem[] = [];
 
   for (let i = 0; i < count; i++) {
@@ -547,16 +575,17 @@ export function buildWavePlan(wave: number): WavePlan {
       hp: Math.round(arch.baseHp * hpMultiplier),
       speed: Number((arch.baseSpeed * speedMultiplier).toFixed(2)),
       gateDamage: arch.gateDamage,
-      spawnDelay: i === 0 ? 0.35 : Math.max(0.36, 1.15 - wave * 0.02),
+      spawnDelay: i === 0 ? 0.35 : Math.max(0.28, (1.15 - wave * 0.02) * coopCadenceScale),
       laneOffset: Math.max(-2.1, Math.min(2.1, laneOffset)),
     });
   }
 
   if (isMiniBoss) {
     const arch = ENEMY_ARCHETYPES[EnemyType.MINI_BOSS];
+    const cycleMult = 1 + Math.max(0, Math.floor((wave - 5) / 10)) * 0.15;
     spawns.push({
       enemyType: EnemyType.MINI_BOSS,
-      hp: Math.round(arch.baseHp * hpMultiplier * (1 + Math.floor(wave / 10) * 0.15)),
+      hp: Math.round(arch.baseHp * hpMultiplier * cycleMult),
       speed: Number((arch.baseSpeed * speedMultiplier).toFixed(2)),
       gateDamage: arch.gateDamage,
       spawnDelay: 1.6,
@@ -564,9 +593,10 @@ export function buildWavePlan(wave: number): WavePlan {
     });
   } else if (isBigBoss) {
     const arch = ENEMY_ARCHETYPES[EnemyType.BIG_BOSS];
+    const cycleMult = 1 + Math.max(0, Math.floor(wave / 10) - 1) * 0.22;
     spawns.push({
       enemyType: EnemyType.BIG_BOSS,
-      hp: Math.round(arch.baseHp * hpMultiplier * (1 + Math.floor(wave / 10) * 0.22)),
+      hp: Math.round(arch.baseHp * hpMultiplier * cycleMult),
       speed: Number((arch.baseSpeed * speedMultiplier).toFixed(2)),
       gateDamage: arch.gateDamage,
       spawnDelay: 2.0,
@@ -574,7 +604,8 @@ export function buildWavePlan(wave: number): WavePlan {
     });
   }
 
-  const crystalReward = isBigBoss ? 20 : isMiniBoss ? 10 : 5;
+  const crystalReward =
+    (isBigBoss ? 20 : isMiniBoss ? 10 : 5) + (mode === 'coop' ? 2 : 0);
 
   return {
     wave,
