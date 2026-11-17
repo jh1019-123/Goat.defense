@@ -286,7 +286,7 @@ export function subscribeCoopTowers(
   const path = `coop_rooms/${roomId}/towers`;
   const q = query(
     collection(db, 'coop_rooms', roomId, 'towers'),
-    where('side', 'in', ['left', 'right']),
+    where('col', '>=', 0),
   );
 
   return onSnapshot(

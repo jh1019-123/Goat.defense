@@ -16,8 +16,7 @@ import { db, handleFirestoreError, OperationType } from './firebase';
 import { sanitizeDisplayName } from './playerStorage';
 
 const MAX_CHAT_TEXT_LEN = 200;
-const TS_MIN = Timestamp.fromMillis(0);
-const TS_MAX = Timestamp.fromMillis(4102444800000); // Year 2100
+const TS_MIN = Timestamp.fromMillis(1000);
 
 function makeSafeMessageId(): string {
   const rand = Math.random().toString(36).slice(2, 10);
@@ -36,7 +35,6 @@ export function subscribeLobbyChat(
   const q = query(
     collection(db, path),
     where('createdAt', '>=', TS_MIN),
-    where('createdAt', '<=', TS_MAX),
     orderBy('createdAt', 'desc'),
     limit(40),
   );
@@ -105,7 +103,6 @@ export function subscribeCoopChat(
   const q = query(
     collection(db, 'coop_rooms', roomId, 'messages'),
     where('createdAt', '>=', TS_MIN),
-    where('createdAt', '<=', TS_MAX),
     orderBy('createdAt', 'desc'),
     limit(50),
   );

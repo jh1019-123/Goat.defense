@@ -695,7 +695,14 @@ export const LobbyOverlay: React.FC<LobbyOverlayProps> = ({
 
             {authError.code === 'auth/unauthorized-domain' && authError.hostname && (
               <div className="mt-4 rounded-xl border border-slate-700 bg-slate-900/90 p-4">
-                <div className="text-[11px] font-semibold text-slate-400">현재 접속 도메인</div>
+                <div className="rounded-lg border border-sky-500/30 bg-sky-500/10 px-3 py-2 text-[11px] leading-relaxed text-sky-200">
+                  일반 플레이어는 별도 설정이 필요하지 않습니다. 이 사이트의 관리자(배포자)가
+                  아래 도메인을 Firebase에 <span className="font-bold">딱 1번만</span> 추가하면
+                  모든 사용자가 바로 Google 로그인할 수 있습니다.
+                </div>
+                <div className="mt-3 text-[11px] font-semibold text-slate-400">
+                  관리자 등록용 접속 도메인
+                </div>
                 <div className="mt-1.5 flex items-center justify-between gap-2">
                   <code className="font-mono text-xs font-bold text-amber-300 break-all">
                     {authError.hostname}
@@ -711,11 +718,11 @@ export const LobbyOverlay: React.FC<LobbyOverlayProps> = ({
                 </div>
                 <ol className="mt-3 space-y-1 text-[11px] leading-relaxed text-slate-300">
                   <li>
-                    1. Firebase Console에서 프로젝트(
+                    1. 관리자 계정으로 Firebase Console 프로젝트(
                     <span className="font-mono text-cyan-300">{authError.projectId}</span>) 열기
                   </li>
                   <li>2. Authentication → Settings → Authorized domains 이동</li>
-                  <li>3. &quot;Add domain&quot; 클릭 후 위 도메인 붙여넣기 및 저장</li>
+                  <li>3. &quot;Add domain&quot; 클릭 후 위 도메인 붙여넣기 및 저장 (1회 설정)</li>
                 </ol>
               </div>
             )}

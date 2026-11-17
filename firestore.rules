@@ -291,7 +291,7 @@ service cloud.firestore {
     // 5. Global Lobby Real-Time Chat (No PII; immutable messages)
     match /lobby_chat/{messageId} {
       allow get: if isValidId(messageId);
-      allow list: if resource.data.createdAt is timestamp;
+      allow list: if resource.data.createdAt >= timestamp.date(1970, 1, 1);
 
       allow create: if isVerifiedUser()
         && isValidId(messageId)
@@ -304,7 +304,7 @@ service cloud.firestore {
     // 6. Real-Time 2-Player Co-op Rooms
     match /coop_rooms/{roomId} {
       allow get: if isValidId(roomId);
-      allow list: if resource.data.status in ['waiting', 'playing'];
+      allow list: if resource.data.status == 'waiting' || resource.data.status == 'playing';
 
       allow create: if isVerifiedUser()
         && isValidId(roomId)
@@ -366,7 +366,7 @@ service cloud.firestore {
       // 6a. Authoritative Grid Towers per Flank (Host = Left, Guest = Right)
       match /towers/{slotId} {
         allow get: if isSignedIn() && isValidId(roomId) && isCoopMember(roomId);
-        allow list: if isSignedIn() && resource.data.side in ['left', 'right'];
+        allow list: if isSignedIn() && resource.data.col >= 0;
 
         allow create: if isVerifiedUser()
           && isValidId(roomId)
@@ -403,7 +403,7 @@ service cloud.firestore {
       // 6b. In-Room Co-op Real-Time Chat
       match /messages/{messageId} {
         allow get: if isSignedIn() && isValidId(roomId) && isValidId(messageId) && isCoopMember(roomId);
-        allow list: if isSignedIn() && resource.data.createdAt is timestamp;
+        allow list: if isSignedIn() && resource.data.createdAt >= timestamp.date(1970, 1, 1);
 
         allow create: if isVerifiedUser()
           && isValidId(roomId)
