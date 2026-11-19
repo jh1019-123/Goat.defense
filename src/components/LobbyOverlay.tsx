@@ -12,6 +12,8 @@ import {
   Sparkles,
   Trophy,
   Users,
+  Volume2,
+  VolumeX,
   X,
 } from 'lucide-react';
 import {
@@ -34,6 +36,7 @@ export type LobbyTab = 'home' | 'shop' | 'leaderboard';
 
 interface LobbyOverlayProps {
   saveData: PlayerSaveData;
+  muted: boolean;
   isSignedIn: boolean;
   authLoading: boolean;
   authError: AuthErrorDiagnostic | null;
@@ -46,6 +49,7 @@ interface LobbyOverlayProps {
   waitingCoopRoom: CoopRoomState | null;
   coopActionLoading: boolean;
   coopError: string | null;
+  onToggleMute: () => void;
   onStartBattle: () => void;
   onCreateCoopRoom: () => Promise<void>;
   onJoinCoopRoomById: (roomId: string) => Promise<void>;
@@ -65,6 +69,7 @@ interface LobbyOverlayProps {
 
 export const LobbyOverlay: React.FC<LobbyOverlayProps> = ({
   saveData,
+  muted,
   isSignedIn,
   authLoading,
   authError,
@@ -77,6 +82,7 @@ export const LobbyOverlay: React.FC<LobbyOverlayProps> = ({
   waitingCoopRoom,
   coopActionLoading,
   coopError,
+  onToggleMute,
   onStartBattle,
   onCreateCoopRoom,
   onJoinCoopRoomById,
@@ -184,6 +190,7 @@ export const LobbyOverlay: React.FC<LobbyOverlayProps> = ({
         {/* Zone 1: Single-element Brand Wordmark */}
         <button
           type="button"
+          data-sfx="tab"
           onClick={() => setActiveTab('home')}
           className="flex items-baseline gap-2.5 whitespace-nowrap shrink-0 text-left"
         >
@@ -197,6 +204,7 @@ export const LobbyOverlay: React.FC<LobbyOverlayProps> = ({
         <nav className="flex items-center gap-6 text-sm font-medium">
           <button
             type="button"
+            data-sfx="tab"
             onClick={() => setActiveTab('home')}
             className={`pb-0.5 transition-colors whitespace-nowrap shrink-0 ${
               activeTab === 'home'
@@ -208,6 +216,7 @@ export const LobbyOverlay: React.FC<LobbyOverlayProps> = ({
           </button>
           <button
             type="button"
+            data-sfx="tab"
             onClick={() => setActiveTab('shop')}
             className={`pb-0.5 transition-colors whitespace-nowrap shrink-0 ${
               activeTab === 'shop'
@@ -219,6 +228,7 @@ export const LobbyOverlay: React.FC<LobbyOverlayProps> = ({
           </button>
           <button
             type="button"
+            data-sfx="tab"
             onClick={() => setActiveTab('leaderboard')}
             className={`pb-0.5 transition-colors whitespace-nowrap shrink-0 ${
               activeTab === 'leaderboard'
@@ -230,8 +240,23 @@ export const LobbyOverlay: React.FC<LobbyOverlayProps> = ({
           </button>
         </nav>
 
-        {/* Zone 3: Single Primary Action (Crystal Wallet + Auth) */}
-        <div className="flex items-center gap-4 shrink-0">
+        {/* Zone 3: Single Primary Action (Audio + Crystal Wallet + Auth) */}
+        <div className="flex items-center gap-3 shrink-0">
+          <button
+            type="button"
+            data-sfx="none"
+            onClick={onToggleMute}
+            title={muted ? '배경음악 및 효과음 켜기' : '배경음악 및 효과음 끄기'}
+            aria-label={muted ? '소리 켜기' : '음소거'}
+            className={`rounded-lg border p-2 transition-colors shrink-0 ${
+              muted
+                ? 'border-slate-700 bg-slate-900/90 text-slate-400 hover:text-white'
+                : 'border-amber-500/40 bg-amber-500/10 text-amber-300 hover:bg-amber-500/20'
+            }`}
+          >
+            {muted ? <VolumeX className="h-4 w-4" /> : <Volume2 className="h-4 w-4" />}
+          </button>
+
           <div className="flex items-center gap-1.5 text-sm font-semibold text-cyan-300 font-mono-num whitespace-nowrap">
             <Gem className="h-4 w-4 text-cyan-400" />
             <span>{saveData.crystals.toLocaleString()}</span>
@@ -240,6 +265,7 @@ export const LobbyOverlay: React.FC<LobbyOverlayProps> = ({
           {isSignedIn ? (
             <button
               type="button"
+              data-sfx="cancel"
               onClick={onSignOut}
               className="flex items-center gap-2 rounded-lg border border-slate-700 bg-slate-800/90 px-3.5 py-2 text-xs font-medium text-slate-200 hover:border-slate-500 transition-colors whitespace-nowrap shrink-0"
             >
@@ -249,6 +275,7 @@ export const LobbyOverlay: React.FC<LobbyOverlayProps> = ({
           ) : (
             <button
               type="button"
+              data-sfx="confirm"
               disabled={authLoading}
               onClick={onSignIn}
               className="flex items-center gap-2 rounded-lg bg-amber-500 px-4 py-2 text-xs font-bold text-slate-950 hover:bg-amber-400 transition-colors whitespace-nowrap shrink-0"
@@ -318,6 +345,7 @@ export const LobbyOverlay: React.FC<LobbyOverlayProps> = ({
               <div className="mt-6 flex flex-wrap items-center gap-3">
                 <button
                   type="button"
+                  data-sfx="confirm"
                   onClick={onStartBattle}
                   className="flex items-center gap-2 rounded-xl bg-amber-500 px-5 py-3 text-sm font-bold text-slate-950 hover:bg-amber-400 transition-colors shadow-lg whitespace-nowrap shrink-0"
                 >
@@ -326,6 +354,7 @@ export const LobbyOverlay: React.FC<LobbyOverlayProps> = ({
                 </button>
                 <button
                   type="button"
+                  data-sfx="confirm"
                   onClick={() => {
                     onClearCoopError();
                     setShowCoopModal(true);
@@ -337,6 +366,7 @@ export const LobbyOverlay: React.FC<LobbyOverlayProps> = ({
                 </button>
                 <button
                   type="button"
+                  data-sfx="tab"
                   onClick={() => setActiveTab('shop')}
                   className="rounded-xl border border-slate-700 bg-slate-900/90 px-4 py-3 text-sm font-semibold text-slate-200 hover:border-cyan-500/60 hover:text-cyan-300 transition-colors whitespace-nowrap shrink-0"
                 >
@@ -409,6 +439,7 @@ export const LobbyOverlay: React.FC<LobbyOverlayProps> = ({
                         ) : (
                           <button
                             type="button"
+                            data-sfx="confirm"
                             disabled={!canBuy}
                             onClick={() => onBuySkin(skin.id, skin.price)}
                             className={`flex w-full items-center justify-center gap-1.5 rounded-lg py-2 text-xs font-bold transition-colors ${
@@ -463,6 +494,7 @@ export const LobbyOverlay: React.FC<LobbyOverlayProps> = ({
                         ) : (
                           <button
                             type="button"
+                            data-sfx="confirm"
                             disabled={!canBuy}
                             onClick={() => onBuySkill(skill.id, skill.crystalCost)}
                             className={`flex w-full items-center justify-center gap-1.5 rounded-lg py-2 text-xs font-bold transition-colors ${
@@ -533,6 +565,7 @@ export const LobbyOverlay: React.FC<LobbyOverlayProps> = ({
                     />
                     <button
                       type="button"
+                      data-sfx="confirm"
                       disabled={savingName || nameDraft.trim().length === 0}
                       onClick={() => void handleSaveNickname()}
                       className="rounded-lg bg-amber-500 px-3 py-1 text-xs font-bold text-slate-950 hover:bg-amber-400 disabled:opacity-50"
@@ -541,6 +574,7 @@ export const LobbyOverlay: React.FC<LobbyOverlayProps> = ({
                     </button>
                     <button
                       type="button"
+                      data-sfx="cancel"
                       onClick={() => {
                         setEditingName(false);
                         setNameDraft(saveData.displayName);
@@ -684,6 +718,7 @@ export const LobbyOverlay: React.FC<LobbyOverlayProps> = ({
               </div>
               <button
                 type="button"
+                data-sfx="cancel"
                 onClick={onDismissAuthError}
                 className="rounded-lg border border-slate-700 p-1 text-slate-400 hover:text-white"
               >
@@ -781,6 +816,7 @@ export const LobbyOverlay: React.FC<LobbyOverlayProps> = ({
               </div>
               <button
                 type="button"
+                data-sfx="cancel"
                 onClick={() => {
                   if (waitingCoopRoom) {
                     void onCancelCoopRoom();
@@ -863,6 +899,7 @@ export const LobbyOverlay: React.FC<LobbyOverlayProps> = ({
                 <div className="flex justify-end">
                   <button
                     type="button"
+                    data-sfx="cancel"
                     onClick={() => void onCancelCoopRoom()}
                     className="rounded-xl border border-rose-500/40 bg-rose-500/10 px-4 py-2 text-xs font-semibold text-rose-300 hover:bg-rose-500/20"
                   >
@@ -876,6 +913,7 @@ export const LobbyOverlay: React.FC<LobbyOverlayProps> = ({
                 <div className="grid gap-3 sm:grid-cols-2">
                   <button
                     type="button"
+                    data-sfx="confirm"
                     disabled={coopActionLoading}
                     onClick={() => void onCreateCoopRoom()}
                     className="flex flex-col items-start justify-center rounded-xl border border-cyan-400/50 bg-cyan-500/15 p-4 text-left hover:bg-cyan-500/25 disabled:opacity-50 transition-colors"
@@ -905,6 +943,7 @@ export const LobbyOverlay: React.FC<LobbyOverlayProps> = ({
                       />
                       <button
                         type="submit"
+                        data-sfx="confirm"
                         disabled={coopActionLoading || roomCodeInput.trim().length < 6}
                         className="rounded-lg bg-amber-500 px-3 py-1.5 text-xs font-bold text-slate-950 hover:bg-amber-400 disabled:opacity-40"
                       >
@@ -945,6 +984,7 @@ export const LobbyOverlay: React.FC<LobbyOverlayProps> = ({
                             </div>
                             <button
                               type="button"
+                              data-sfx="confirm"
                               disabled={coopActionLoading || isMine}
                               onClick={() => void onJoinCoopRoomById(room.roomId)}
                               className="rounded-lg bg-cyan-500 px-3.5 py-1.5 text-xs font-bold text-slate-950 hover:bg-cyan-400 disabled:opacity-40"
@@ -987,6 +1027,7 @@ export const LobbyOverlay: React.FC<LobbyOverlayProps> = ({
                 </button>
                 <button
                   type="button"
+                  data-sfx="cancel"
                   onClick={() => setShowSqlModal(false)}
                   className="rounded-lg border border-slate-700 p-1.5 text-slate-400 hover:text-white"
                 >

@@ -191,6 +191,7 @@ export const BattleHud: React.FC<BattleHudProps> = ({
           <div className="pointer-events-auto flex items-center gap-2 rounded-xl border border-slate-700/70 bg-[#0c111d]/92 px-3 py-2 shadow-lg">
             <button
               type="button"
+              data-sfx="tab"
               onClick={onToggleSpeed}
               className="rounded-lg border border-slate-700 bg-slate-800/90 px-3 py-1.5 font-mono-num text-xs font-semibold text-slate-100 hover:border-amber-500/60 hover:text-amber-300 transition-colors whitespace-nowrap shrink-0"
             >
@@ -198,6 +199,7 @@ export const BattleHud: React.FC<BattleHudProps> = ({
             </button>
             <button
               type="button"
+              data-sfx="tab"
               onClick={onCycleCamera}
               className="flex items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-800/90 px-3 py-1.5 text-xs font-medium text-slate-200 hover:border-amber-500/60 hover:text-amber-300 transition-colors whitespace-nowrap shrink-0"
             >
@@ -206,14 +208,21 @@ export const BattleHud: React.FC<BattleHudProps> = ({
             </button>
             <button
               type="button"
+              data-sfx="none"
               onClick={onToggleMute}
+              title={muted ? '배경음악 및 효과음 켜기' : '배경음악 및 효과음 끄기'}
               aria-label={muted ? '소리 켜기' : '음소거'}
-              className="rounded-lg border border-slate-700 bg-slate-800/90 p-1.5 text-slate-300 hover:text-white transition-colors shrink-0"
+              className={`rounded-lg border p-1.5 transition-colors shrink-0 ${
+                muted
+                  ? 'border-slate-700 bg-slate-800/90 text-slate-400 hover:text-white'
+                  : 'border-amber-500/40 bg-amber-500/10 text-amber-300 hover:bg-amber-500/20'
+              }`}
             >
               {muted ? <VolumeX className="h-4 w-4" /> : <Volume2 className="h-4 w-4" />}
             </button>
             <button
               type="button"
+              data-sfx="cancel"
               onClick={onExitToLobby}
               className="rounded-lg border border-slate-700 bg-slate-800/90 px-3 py-1.5 text-xs font-medium text-slate-300 hover:border-rose-500/60 hover:text-rose-300 transition-colors whitespace-nowrap shrink-0"
             >
@@ -292,6 +301,7 @@ export const BattleHud: React.FC<BattleHudProps> = ({
                   {selectedTower.level < 3 && selectedTower.nextUpgradeCost !== null && (
                     <button
                       type="button"
+                      data-sfx="confirm"
                       disabled={hud.coins < selectedTower.nextUpgradeCost}
                       onClick={() => onUpgradeTower()}
                       className={`rounded-lg px-3.5 py-2 text-xs font-semibold transition-colors whitespace-nowrap shrink-0 ${
@@ -309,6 +319,7 @@ export const BattleHud: React.FC<BattleHudProps> = ({
                       <button
                         key={branch.id}
                         type="button"
+                        data-sfx="confirm"
                         disabled={hud.coins < branch.cost}
                         onClick={() => onUpgradeTower(branch.id)}
                         className={`rounded-lg border px-3 py-1.5 text-left transition-colors ${
@@ -333,6 +344,7 @@ export const BattleHud: React.FC<BattleHudProps> = ({
 
                   <button
                     type="button"
+                    data-sfx="cancel"
                     onClick={onSellTower}
                     className="flex items-center gap-1 rounded-lg border border-rose-500/40 bg-rose-500/10 px-3 py-2 text-xs font-medium text-rose-300 hover:bg-rose-500/20 transition-colors whitespace-nowrap shrink-0"
                   >
@@ -353,6 +365,7 @@ export const BattleHud: React.FC<BattleHudProps> = ({
         <div className="pointer-events-auto flex items-center gap-2">
           <button
             type="button"
+            data-sfx="tab"
             onClick={() => setDockCollapsed((v) => !v)}
             className="flex items-center gap-1.5 rounded-t-lg border border-b-0 border-slate-700/70 bg-[#0c111d]/92 px-3 py-1 text-[11px] font-medium text-slate-300 hover:text-white transition-colors"
           >
@@ -377,6 +390,7 @@ export const BattleHud: React.FC<BattleHudProps> = ({
                   <button
                     key={type}
                     type="button"
+                    data-sfx="tab"
                     onClick={() => onSelectBuildType(type)}
                     className={`flex items-center gap-2 rounded-xl border px-3 py-2 text-left transition-all whitespace-nowrap shrink-0 ${
                       isSelected
@@ -410,6 +424,7 @@ export const BattleHud: React.FC<BattleHudProps> = ({
                     <button
                       key={skill.id}
                       type="button"
+                      data-sfx="confirm"
                       disabled={!ready}
                       onClick={() => onTriggerSkill(skill.id)}
                       title={skill.description}
@@ -437,6 +452,7 @@ export const BattleHud: React.FC<BattleHudProps> = ({
               {hud.phase === 'prep' ? (
                 <button
                   type="button"
+                  data-sfx="confirm"
                   onClick={onStartWave}
                   className="flex items-center gap-2 rounded-xl bg-amber-500 px-5 py-2.5 text-sm font-bold text-slate-950 hover:bg-amber-400 transition-colors shadow-lg whitespace-nowrap shrink-0"
                 >
@@ -507,6 +523,7 @@ export const BattleHud: React.FC<BattleHudProps> = ({
             <div className="mt-6 flex items-center justify-end gap-3">
               <button
                 type="button"
+                data-sfx="cancel"
                 onClick={onExitToLobby}
                 className="rounded-xl border border-slate-700 px-4 py-2.5 text-sm font-medium text-slate-200 hover:bg-slate-800 transition-colors"
               >
@@ -515,6 +532,7 @@ export const BattleHud: React.FC<BattleHudProps> = ({
               {!isCoop && (
                 <button
                   type="button"
+                  data-sfx="confirm"
                   onClick={onRestartBattle}
                   className="flex items-center gap-2 rounded-xl bg-amber-500 px-5 py-2.5 text-sm font-bold text-slate-950 hover:bg-amber-400 transition-colors"
                 >

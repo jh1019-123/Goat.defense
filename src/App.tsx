@@ -203,10 +203,14 @@ export default function App() {
   const activeCoopRoomRef = useRef<CoopRoomState | null>(null);
   const coopBattleStartedForRoomIdRef = useRef<string | null>(null);
   const screenRef = useRef<'lobby' | 'battle'>('lobby');
+  const battleTransitioningRef = useRef(false);
 
   useEffect(() => {
     screenRef.current = screen;
   }, [screen]);
+  useEffect(() => {
+    battleTransitioningRef.current = battleTransitioning;
+  }, [battleTransitioning]);
   useEffect(() => {
     userRef.current = firebaseUser;
   }, [firebaseUser]);
@@ -220,6 +224,47 @@ export default function App() {
   useEffect(() => {
     activeCoopRoomRef.current = activeCoopRoom;
   }, [activeCoopRoom]);
+
+  // Global delegated UI button sound effect for EVERY button press across the entire app
+  useEffect(() => {
+    const handleGlobalButtonClick = (e: MouseEvent) => {
+      const target = e.target as HTMLElement | null;
+      const btn = target?.closest('button, [role="button"]') as HTMLButtonElement | null;
+      if (!btn || btn.disabled || btn.getAttribute('aria-disabled') === 'true') return;
+      const sfx = btn.dataset.sfx;
+      if (sfx === 'none') return;
+      if (sfx === 'confirm') {
+        soundEngine.playUiConfirm();
+      } else if (sfx === 'tab') {
+        soundEngine.playUiTab();
+      } else if (sfx === 'cancel') {
+        soundEngine.playUiCancel();
+      } else {
+        soundEngine.playUiClick();
+      }
+    };
+    document.addEventListener('click', handleGlobalButtonClick, true);
+    return () => document.removeEventListener('click', handleGlobalButtonClick, true);
+  }, []);
+
+  // Ensure BGM unlocks & stays synced to Lobby vs Battle across desktop and iOS/iPadOS browsers
+  useEffect(() => {
+    if (showIntro) return;
+    if (!battleTransitioning) {
+      soundEngine.setBgmTrack(screen === 'battle' ? 'battle' : 'lobby');
+    }
+    const handleGestureUnlock = () => {
+      if (!battleTransitioningRef.current) {
+        soundEngine.unlockAndSyncBgm(screenRef.current === 'battle' ? 'battle' : 'lobby');
+      }
+    };
+    window.addEventListener('pointerdown', handleGestureUnlock, { passive: true });
+    window.addEventListener('keydown', handleGestureUnlock, { passive: true });
+    return () => {
+      window.removeEventListener('pointerdown', handleGestureUnlock);
+      window.removeEventListener('keydown', handleGestureUnlock);
+    };
+  }, [showIntro, screen, battleTransitioning]);
 
   // Cycle lobby 3D background camera angles every 7s with smooth fade-out / fade-in
   useEffect(() => {
@@ -318,6 +363,8 @@ export default function App() {
       ) {
         coopBattleStartedForRoomIdRef.current = room.roomId;
         pendingBattleModeRef.current = 'coop';
+        soundEngine.fadeOutBgm();
+        soundEngine.playBattleTransitionHorn();
         setTransitionIsCoop(true);
         setBattleTransitioning(true);
       }
@@ -587,6 +634,8 @@ export default function App() {
 
   const handleStartBattle = useCallback(() => {
     pendingBattleModeRef.current = 'solo';
+    soundEngine.fadeOutBgm();
+    soundEngine.playBattleTransitionHorn();
     setTransitionIsCoop(false);
     setBattleTransitioning(true);
   }, []);
@@ -595,6 +644,7 @@ export default function App() {
     setScreen('battle');
     setCameraPreset(CameraPreset.SECOND_PERSON);
     engineRef.current?.setCameraPreset(CameraPreset.SECOND_PERSON);
+    soundEngine.setBgmTrack('battle');
 
     if (pendingBattleModeRef.current === 'coop' && activeCoopRoomRef.current && userRef.current) {
       const room = activeCoopRoomRef.current;
@@ -747,6 +797,7 @@ export default function App() {
 
     setScreen('lobby');
     engineRef.current?.returnToLobby();
+    soundEngine.setBgmTrack('lobby');
   }, [hud.phase, hud.totalKills, hud.wave, hud.bossesDefeated]);
 
   const handleBuySkin = useCallback((skinId: string, price: number) => {
@@ -845,6 +896,10 @@ export default function App() {
     setMuted((prev) => {
       const next = !prev;
       soundEngine.setMuted(next);
+      if (!next) {
+        soundEngine.unlockAndSyncBgm(screenRef.current === 'battle' ? 'battle' : 'lobby');
+        soundEngine.playUiClick();
+      }
       return next;
     });
   }, []);
@@ -879,6 +934,7 @@ export default function App() {
         >
           <LobbyOverlay
             saveData={saveData}
+            muted={muted}
             isSignedIn={Boolean(firebaseUser)}
             authLoading={authLoading}
             authError={authError}
@@ -893,6 +949,7 @@ export default function App() {
             }
             coopActionLoading={coopActionLoading}
             coopError={coopError}
+            onToggleMute={handleToggleMute}
             onStartBattle={handleStartBattle}
             onCreateCoopRoom={handleCreateCoopRoom}
             onJoinCoopRoomById={handleJoinCoopRoomById}

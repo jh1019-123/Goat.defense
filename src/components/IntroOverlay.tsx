@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { soundEngine } from '../lib/audio';
 
 interface IntroOverlayProps {
   onComplete: () => void;
@@ -21,6 +22,8 @@ export const IntroOverlay: React.FC<IntroOverlayProps> = ({ onComplete }) => {
   const triggerExit = useCallback(() => {
     if (completedRef.current) return;
     completedRef.current = true;
+    soundEngine.playUiConfirm();
+    soundEngine.unlockAndSyncBgm('lobby');
     setStage('fade_out');
     window.setTimeout(() => {
       onComplete();
@@ -164,6 +167,7 @@ export const IntroOverlay: React.FC<IntroOverlayProps> = ({ onComplete }) => {
 
         <button
           type="button"
+          data-sfx="none"
           onClick={(e) => {
             e.stopPropagation();
             triggerExit();
